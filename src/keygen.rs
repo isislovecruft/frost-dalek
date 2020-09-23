@@ -370,8 +370,35 @@ pub struct PublicShare {
 }
 
 impl PublicShare {
-    /// XXX DOCDOC
-    pub fn verify(&self, commitments: &Vec<RistrettoPoint>) -> Result<(), ()> {
+    /// Any participant can compute the public verification share of any other participant.
+    ///
+    /// This is done by re-computing this [`PublicShare`] as:
+    ///
+    /// \(( Y_i = \Prod{j=1}{n} \Prod{k=0}{t-1} \phi_{jk}^{i^{k} \mod q} \))
+    ///
+    /// # Inputs
+    ///
+    /// * The [`Parameters`] of this threshold signing instance, and
+    /// * A vector of `commitments` regarding the secret polynomial
+    ///   [`Coefficients`] that this [`PublicShare`] was generated with.
+    ///
+    /// # Returns
+    ///
+    /// A `Result` with either an empty `Ok` or `Err` value, depending on
+    /// whether or not the verification was successful.
+    pub fn verify(
+        &self,
+        parameters: &Parameters,
+        commitments: &Vec<RistrettoPoint>
+    ) -> Result<(), ()>
+    {
+        let mut rhs = RistrettoPoint::identity();
+
+        'outer: for j in 1..parameters.n {
+            'inner: for k in 0..parameters.t {
+                // XXX ah shit we need the incoming commitments to be sorted or have indices
+            }
+        }
         unimplemented!()
     }
 }
