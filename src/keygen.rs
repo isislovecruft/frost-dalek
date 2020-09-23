@@ -327,10 +327,14 @@ impl SecretShare {
         let mut rhs: RistrettoPoint = commitments[0];
 
         for i in 1..commitments.len() {
-
+            rhs += commitments[i] * term;
+            term += term;
         }
 
-        unimplemented!()
+        match lhs.compress() == rhs.compress() {
+            true => Ok(()),
+            false => Err(()),
+        }
     }
 }
 
