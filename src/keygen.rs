@@ -353,10 +353,25 @@ impl DistributedKeyGeneration<RoundTwo> {
     /// Calculate this threshold signing protocol participant's long-lived
     /// secret signing keyshare and the group's public verification key.
     pub fn finish(self) -> Result<(GroupKey, SecretKey), ()> {
-
+        let secret_key = self.calculate_signing_key();
 
         // XXX remember to zeroize secret parts of the state
         unimplemented!()
+    }
+
+    /// Calculate this threshold signing participant's long-lived secret signing
+    /// key by summing all of the polynomial evaluations from the other
+    /// participants.
+    pub(crate) fn calculate_signing_key(&self) -> SecretKey {
+        SecretKey {
+            index: self.state.my_secret_share.index,
+            key: self.state.my_secret_shares.iter().sum(),
+        }
+    }
+
+    /// XXX DOCDOC
+    pub(crate) fn calculate_group_key(&self) -> GroupKey {
+        self.state
     }
 }
 
