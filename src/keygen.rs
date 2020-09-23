@@ -27,7 +27,7 @@ use crate::Parameters;
 /// the shard is overwritten with zeroes when it falls out of scope.
 #[derive(Zeroize)]
 #[zeroize(drop)]
-pub(crate) struct Coefficients(pub(crate) Vec<Scalar>);
+pub struct Coefficients(pub(crate) Vec<Scalar>);
 
 /// A participant in a threshold signing.
 pub struct Participant {
@@ -201,8 +201,8 @@ impl DistributedKeyGeneration<RoundOne> {
         other_participants: &mut Vec<Participant>,
     ) -> Result<Self, Vec<u32>>
     {
-        let their_commitments: Vec<(u32, Vec<RistrettoPoint>)> = Vec::with_capacity(parameters.t as usize);
-        let misbehaving_participants: Vec<u32> = Vec::new();
+        let mut their_commitments: Vec<(u32, Vec<RistrettoPoint>)> = Vec::with_capacity(parameters.t as usize);
+        let mut misbehaving_participants: Vec<u32> = Vec::new();
 
         // Bail if we didn't get enough participants.
         if other_participants.len() != parameters.t as usize {
@@ -220,9 +220,9 @@ impl DistributedKeyGeneration<RoundOne> {
                     misbehaving_participants.push(p.index);
                     continue;
                 }
-            }
+            };
             match p.proof_of_secret_key.verify(&p.index, &public_key) {
-                Ok(_)  => their_commitments.push((p.index, p.commitments)),
+                Ok(_)  => their_commitments.push((p.index, p.commitments.clone())),
                 Err(_) => misbehaving_participants.push(p.index),
             }
         }
@@ -253,7 +253,7 @@ impl DistributedKeyGeneration<RoundOne> {
             my_secret_shares: None,
         };
 
-        Ok(DistibutedKeyGeneration::<RoundOne> {
+        Ok(DistributedKeyGeneration::<RoundOne> {
             state: Box::new(state),
             data: RoundOne {},
         })
@@ -261,8 +261,8 @@ impl DistributedKeyGeneration<RoundOne> {
 
     /// Retrieve a secret share for each other participant, to be given to them
     /// at the end of `DistributedKeyGeneration::<RoundOne>`.
-    pub fn their_secret_shares(&self) -> &Vec<SecretShare> {
-        &self.state.secret_shares.is_some()
+    pub fn their_secret_shares(&self) -> Result<&Vec<SecretShare>, ()> {
+        self.state.their_secret_shares.as_ref().ok_or(())
     }
 
     /// Progress to round two of the DKG protocol once we have sent each share
@@ -280,7 +280,7 @@ impl DistributedKeyGeneration<RoundOne> {
         for share in my_secret_shares.iter() {
             // XXX TODO implement sorting for SecretShare and also for a new Commitment type
             for (index, commitments) in self.state.their_commitments.iter() {
-                if index == share.index {
+                if index == &share.index {
                     share.verify(&commitments)?;
                 }
             }
@@ -299,7 +299,9 @@ impl DistributedKeyGeneration<RoundOne> {
 #[derive(Zeroize)]
 #[zeroize(drop)]
 pub struct SecretShare {
+    /// XXX DOCDOC
     pub index: u32,
+    /// XXX DOCDOC
     pub(crate) polynomial_evaluation: Scalar,
 }
 
@@ -319,7 +321,7 @@ impl SecretShare {
     /// XXX DOCDOC
     pub(crate) fn verify(&self, commitments: &Vec<RistrettoPoint>) -> Result<(), ()> {
         let lhs = &RISTRETTO_BASEPOINT_TABLE * &self.polynomial_evaluation;
-        let mut term: Scalar = (*self.index).into();
+        let mut term: Scalar = self.index.into();
         let mut rhs: RistrettoPoint = commitments[0];
 
         for i in 1..commitments.len() {
@@ -335,6 +337,7 @@ impl SecretShare {
 pub struct RoundTwo {}
 
 impl DistributedKeyGeneration<RoundTwo> {
+    /// XXX DOCDOC
     pub fn finish(self) -> Result<(), ()> {
 
 
@@ -345,7 +348,9 @@ impl DistributedKeyGeneration<RoundTwo> {
 
 /// XXX DOCDOC
 pub struct PublicShare {
+    /// XXX DOCDOC
     pub index: u32,
+    /// XXX DOCDOC
     pub(crate) share: RistrettoPoint,
 }
 
@@ -368,13 +373,9 @@ mod test {
 
     #[test]
     fn nizk_of_secret_key() {
-        let mut rng = OsRng;
-        let a = Scalar::random(&mut rng);
-        let A = &RISTRETTO_BASEPOINT_TABLE * &a;
-        let p = Participant { i: 0, coefficients: Coefficients(a), A: A};
-
-        let proof = NizkOfSecretKey::prove(&p);
-        let result = proof.verify(&0, &A);
+        let params = Parameters { n: 3, t: 2 };
+        let (p, _) = Participant::new(&params, 0);
+        let result = p.proof_of_secret_key.verify(&p.index, &p.commitments[0]);
 
         assert!(result.is_ok());
     }

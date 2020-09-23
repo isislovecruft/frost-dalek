@@ -18,8 +18,8 @@ use rand::rngs::OsRng;
 use sha2::Digest;
 use sha2::Sha512;
 
-use crate::Coefficients;
 use crate::ProofError;
+use crate::keygen::Coefficients;
 
 /// A proof of knowledge of a secret key, created by making a Schnorr signature
 /// with the secret key.
