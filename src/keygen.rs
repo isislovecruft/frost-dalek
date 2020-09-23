@@ -15,6 +15,7 @@ use std::vec::Vec;
 use curve25519_dalek::constants::RISTRETTO_BASEPOINT_TABLE;
 use curve25519_dalek::ristretto::RistrettoPoint;
 use curve25519_dalek::scalar::Scalar;
+use curve25519_dalek::traits::Identity;
 
 use rand::rngs::OsRng;
 
@@ -275,11 +276,11 @@ impl DistributedKeyGeneration<RoundOne> {
     ) -> Result<DistributedKeyGeneration<RoundTwo>, ()>
     {
         // Zero out the other participants secret shares from memory.
-        for their_share in self.state.their_secret_shares.as_mut_ref().iter() {
-            their_share.zeroize()
+        if self.state.their_secret_shares.is_some() {
+            self.state.their_secret_shares.unwrap().zeroize();
+            // XXX Does setting this to None always call drop()?
+            self.state.their_secret_shares = None;
         }
-        // XXX Does setting this to None here effectively call drop()? If so, how effectively?
-        self.state.their_secret_shares = None;
 
         // Step 2: Each P_i verifies their shares by calculating:
         //         g^{f_l(i)} ?= \Prod_{k=0}^{t-1} \phi_{lk}^{i^{k} mod q},
@@ -352,26 +353,52 @@ pub struct RoundTwo {}
 impl DistributedKeyGeneration<RoundTwo> {
     /// Calculate this threshold signing protocol participant's long-lived
     /// secret signing keyshare and the group's public verification key.
-    pub fn finish(self) -> Result<(GroupKey, SecretKey), ()> {
-        let secret_key = self.calculate_signing_key();
+    ///
+    /// # Example
+    ///
+    /// ```ignore
+    /// let (group_key, secret_key) = state.finish(participant.commitments.get(0)?)?;
+    /// ```
+    pub fn finish(mut self, my_commitment: &RistrettoPoint) -> Result<(GroupKey, SecretKey), ()> {
+        let secret_key = self.calculate_signing_key()?;
+        let group_key = self.calculate_group_key(my_commitment)?;
 
-        // XXX remember to zeroize secret parts of the state
-        unimplemented!()
+        self.state.my_secret_share.zeroize();
+        self.state.my_secret_shares.zeroize();
+
+        Ok((group_key, secret_key))
     }
 
     /// Calculate this threshold signing participant's long-lived secret signing
     /// key by summing all of the polynomial evaluations from the other
     /// participants.
-    pub(crate) fn calculate_signing_key(&self) -> SecretKey {
-        SecretKey {
-            index: self.state.my_secret_share.index,
-            key: self.state.my_secret_shares.iter().sum(),
-        }
+    pub(crate) fn calculate_signing_key(&self) -> Result<SecretKey, ()> {
+        let my_secret_shares = self.state.my_secret_shares.as_ref().ok_or(())?;
+        let mut key = my_secret_shares.iter().map(|x| x.polynomial_evaluation).sum();
+
+        // XXX i think we're supposed to include the self-generated share?
+        key += self.state.my_secret_share.polynomial_evaluation;
+
+        Ok(SecretKey { index: self.state.my_secret_share.index, key })
     }
 
-    /// XXX DOCDOC
-    pub(crate) fn calculate_group_key(&self) -> GroupKey {
-        self.state
+    /// Calculate the group public key used for verifying threshold signatures.
+    ///
+    /// # Returns
+    ///
+    /// A [`GroupKey`] for the set of participants.
+    pub(crate) fn calculate_group_key(&self, my_commitment: &RistrettoPoint) -> Result<GroupKey, ()> {
+        let mut keys: Vec<RistrettoPoint> = Vec::with_capacity(self.state.parameters.n as usize);
+
+        for commitment in self.state.their_commitments.iter() {
+            match commitment.1.get(0) {
+                Some(key) => keys.push(*key),
+                None => return Err(()),
+            }
+        }
+        keys.push(*my_commitment);
+
+        Ok(GroupKey(keys.iter().sum()))
     }
 }
 
@@ -404,13 +431,13 @@ impl PublicShare {
     pub fn verify(
         &self,
         parameters: &Parameters,
-        commitments: &Vec<RistrettoPoint>
+        commitments: &Vec<RistrettoPoint>,
     ) -> Result<(), ()>
     {
         let mut rhs = RistrettoPoint::identity();
 
-        'outer: for j in 1..parameters.n {
-            'inner: for k in 0..parameters.t {
+        for j in 1..parameters.n {
+            for k in 0..parameters.t {
                 // XXX ah shit we need the incoming commitments to be sorted or have indices
             }
         }
@@ -429,10 +456,12 @@ pub struct SecretKey {
 }
 
 impl From<SecretKey> for PublicShare {
-    fn from(&self) -> PublicShare {
+    fn from(source: SecretKey) -> PublicShare {
+        let share = &RISTRETTO_BASEPOINT_TABLE * &source.key;
+
         PublicShare {
-            index: self.index,
-            key: &RISTRETTO_BASEPOINT_TABLE * &self.polynomial_evaluation,
+            index: source.index,
+            share: share,
         }
     }
 }
