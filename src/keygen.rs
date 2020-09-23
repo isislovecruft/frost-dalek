@@ -377,7 +377,23 @@ impl PublicShare {
 }
 
 /// A secret key, used by one participant in a threshold signature scheme, to sign a message.
-pub struct SecretKey(pub(crate) Scalar);
+#[derive(Zeroize)]
+#[zeroize(drop)]
+pub struct SecretKey {
+    /// The participant index to which this key belongs.
+    pub(crate) index: u32,
+    /// The participant's long-lived secret share of the group signing key.
+    pub(crate) key: Scalar,
+}
+
+impl From<SecretKey> for PublicShare {
+    fn from(&self) -> PublicShare {
+        PublicShare {
+            index: self.index,
+            key: &RISTRETTO_BASEPOINT_TABLE * &self.polynomial_evaluation,
+        }
+    }
+}
 
 /// A public key, used to verify a signature made by a threshold of a group of participants.
 pub struct GroupKey(pub(crate) RistrettoPoint);
