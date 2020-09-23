@@ -274,6 +274,13 @@ impl DistributedKeyGeneration<RoundOne> {
         my_secret_shares: Vec<SecretShare>,
     ) -> Result<DistributedKeyGeneration<RoundTwo>, ()>
     {
+        // Zero out the other participants secret shares from memory.
+        for their_share in self.state.their_secret_shares.as_mut_ref().iter() {
+            their_share.zeroize()
+        }
+        // XXX Does setting this to None here effectively call drop()? If so, how effectively?
+        self.state.their_secret_shares = None;
+
         // Step 2: Each P_i verifies their shares by calculating:
         //         g^{f_l(i)} ?= \Prod_{k=0}^{t-1} \phi_{lk}^{i^{k} mod q},
         //         aborting if the check fails.
