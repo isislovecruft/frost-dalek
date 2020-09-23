@@ -299,9 +299,10 @@ impl DistributedKeyGeneration<RoundOne> {
 #[derive(Zeroize)]
 #[zeroize(drop)]
 pub struct SecretShare {
-    /// XXX DOCDOC
+    /// The participant index that this secret share was calculated for.
     pub index: u32,
-    /// XXX DOCDOC
+    /// The final evaluation of the polynomial for the participant-respective
+    /// indeterminant.
     pub(crate) polynomial_evaluation: Scalar,
 }
 
@@ -318,7 +319,8 @@ impl SecretShare {
         SecretShare { index: *index, polynomial_evaluation: sum }
     }
 
-    /// XXX DOCDOC
+    /// Verify that this secret share was correctly computed w.r.t. some secret
+    /// polynomial coefficients attested to by some `commitments`.
     pub(crate) fn verify(&self, commitments: &Vec<RistrettoPoint>) -> Result<(), ()> {
         let lhs = &RISTRETTO_BASEPOINT_TABLE * &self.polynomial_evaluation;
         let mut term: Scalar = self.index.into();
