@@ -350,8 +350,9 @@ impl SecretShare {
 pub struct RoundTwo {}
 
 impl DistributedKeyGeneration<RoundTwo> {
-    /// XXX DOCDOC
-    pub fn finish(self) -> Result<(), ()> {
+    /// Calculate this threshold signing protocol participant's long-lived
+    /// secret signing keyshare and the group's public verification key.
+    pub fn finish(self) -> Result<(GroupKey, SecretKey), ()> {
 
 
         // XXX remember to zeroize secret parts of the state
