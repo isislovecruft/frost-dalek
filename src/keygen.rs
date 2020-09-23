@@ -360,12 +360,13 @@ impl DistributedKeyGeneration<RoundTwo> {
     }
 }
 
-/// XXX DOCDOC
+/// A public verification share for a participant.
 pub struct PublicShare {
-    /// XXX DOCDOC
+    /// The participant index to which this key belongs.
     pub index: u32,
-    /// XXX DOCDOC
-    pub(crate) share: RistrettoPoint,
+    /// The public verification share.
+    // XXX DOCDOC this docstring tells us nothing useful
+    pub share: RistrettoPoint,
 }
 
 impl PublicShare {
