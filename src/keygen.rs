@@ -8,6 +8,12 @@
 // - isis agora lovecruft <isis@patternsinthevoid.net>
 
 //! A variation of Pedersen's distributed key generation (DKG) protocol.
+//!
+//! # Examples
+//!
+//! ```rust
+//! // XXX DOCDOC
+//! ```
 
 use std::boxed::Box;
 use std::vec::Vec;
