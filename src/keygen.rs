@@ -31,6 +31,7 @@ use crate::Parameters;
 pub struct Coefficients(pub(crate) Vec<Scalar>);
 
 /// A participant in a threshold signing.
+#[derive(Clone, Debug)]
 pub struct Participant {
     /// The index of this participant, to keep the participants in order.
     pub index: u32,
@@ -96,6 +97,13 @@ impl Participant {
         // Step 4: Every participant P_i broadcasts C_i, \alpha_i to all other participants.
         (Participant { index, commitments, proof_of_secret_key: proof }, coefficients)
     }
+
+    /// Retrieve \(( \alpha_{i0} * B \)), where \(( B \)) is the Ristretto basepoint.
+    ///
+    /// This is used to pass into the final call to `DistributedKeyGeneration::<RoundTwo>.finish()`.
+    pub fn public_key(&self) -> &RistrettoPoint {
+        &self.commitments[0]
+    }
 }
 
 // impl PartialOrd for Participant {
@@ -125,12 +133,14 @@ mod private {
 
 /// State machine structures for holding intermediate values during a
 /// distributed key generation protocol run, to prevent misuse.
+#[derive(Debug)]
 pub struct DistributedKeyGeneration<S: DkgState> {
     state: Box<ActualState>,
     data: S,
 }
 
 /// Shared state which occurs across all rounds of a threshold signing protocol run.
+#[derive(Debug)]
 struct ActualState {
     /// The parameters for this instantiation of a threshold signature.
     parameters: Parameters,
@@ -180,6 +190,7 @@ impl Round2 for RoundTwo {}
 /// commitments and a zero-knowledge proof of a secret key to every other
 /// participant in the protocol.  During round one, each participant checks the
 /// zero-knowledge proofs of secret keys of all other participants.
+#[derive(Debug)]
 pub struct RoundOne {}
 
 impl DistributedKeyGeneration<RoundOne> {
@@ -241,6 +252,7 @@ impl DistributedKeyGeneration<RoundOne> {
         //         (l, f_i(l)) and keeps (i, f_i(i)) for themselves.
         let mut their_secret_shares: Vec<SecretShare> = Vec::with_capacity(parameters.t as usize);
 
+        // XXX need a way to index their_secret_shares
         for p in other_participants.iter() {
             their_secret_shares.push(SecretShare::evaluate_polynomial(&p.index, my_coefficients));
         }
@@ -304,7 +316,7 @@ impl DistributedKeyGeneration<RoundOne> {
 
 /// A secret share calculated by evaluating a polynomial with secret
 /// coefficients for some indeterminant.
-#[derive(Zeroize)]
+#[derive(Clone, Debug, Zeroize)]
 #[zeroize(drop)]
 pub struct SecretShare {
     /// The participant index that this secret share was calculated for.
@@ -348,6 +360,7 @@ impl SecretShare {
 
 /// During round two each participant verifies their secret shares they received
 /// from each other participant.
+#[derive(Debug)]
 pub struct RoundTwo {}
 
 impl DistributedKeyGeneration<RoundTwo> {
@@ -480,5 +493,62 @@ mod test {
         let result = p.proof_of_secret_key.verify(&p.index, &p.commitments[0]);
 
         assert!(result.is_ok());
+    }
+
+    #[test]
+    fn entire_keygen_protocol() {
+        fn do_test() -> Result<(), ()> {
+            let params = Parameters { n: 3, t: 2 };
+
+            let (p1, p1coeffs) = Participant::new(&params, 0);
+            let (p2, p2coeffs) = Participant::new(&params, 1);
+            let (p3, p3coeffs) = Participant::new(&params, 2);
+
+            p2.proof_of_secret_key.verify(&p2.index, &p2.commitments[0])?;
+            p3.proof_of_secret_key.verify(&p3.index, &p3.commitments[0])?;
+
+            let mut p1_other_participants: Vec<Participant> = vec!(p2.clone(), p3.clone());
+            let p1_state = DistributedKeyGeneration::<RoundOne>::new(&params,
+                                                                     &p1.index,
+                                                                     &p1coeffs,
+                                                                     &mut p1_other_participants).or(Err(()))?;
+            let p1_their_secret_shares = p1_state.their_secret_shares()?;
+
+            let mut p2_other_participants: Vec<Participant> = vec!(p1.clone(), p3.clone());
+            let p2_state = DistributedKeyGeneration::<RoundOne>::new(&params,
+                                                                     &p2.index,
+                                                                     &p2coeffs,
+                                                                     &mut p2_other_participants).or(Err(()))?;
+            let p2_their_secret_shares = p2_state.their_secret_shares()?;
+
+            let mut p3_other_participants: Vec<Participant> = vec!(p1.clone(), p2.clone());
+            let  p3_state = DistributedKeyGeneration::<RoundOne>::new(&params,
+                                                                      &p3.index,
+                                                                      &p3coeffs,
+                                                                      &mut p3_other_participants).or(Err(()))?;
+            let p3_their_secret_shares = p3_state.their_secret_shares()?;
+
+            let p1_my_secret_shares = vec!(p2_their_secret_shares[0].clone(), // XXX FIXME indexing
+                                           p3_their_secret_shares[0].clone());
+            let p2_my_secret_shares = vec!(p1_their_secret_shares[0].clone(),
+                                           p3_their_secret_shares[1].clone());
+            let p3_my_secret_shares = vec!(p1_their_secret_shares[1].clone(),
+                                           p2_their_secret_shares[1].clone());
+
+            let p1_state = p1_state.to_round_two(p1_my_secret_shares)?;
+            let p2_state = p2_state.to_round_two(p2_my_secret_shares)?;
+            let p3_state = p3_state.to_round_two(p3_my_secret_shares)?;
+
+            // XXX make a method for getting the public key share/commitment
+            let (p1_group_key, p1_secret_key) = p1_state.finish(p1.public_key())?;
+            let (p2_group_key, p2_secret_key) = p2_state.finish(p2.public_key())?;
+            let (p3_group_key, p3_secret_key) = p3_state.finish(p3.public_key())?;
+
+            assert!(p1_group_key.0.compress() == p2_group_key.0.compress());
+            assert!(p2_group_key.0.compress() == p3_group_key.0.compress());
+
+            Ok(())
+        }
+        assert!(do_test().is_ok());
     }
 }
