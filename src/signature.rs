@@ -9,6 +9,10 @@
 
 //! FROST signatures and their creation.
 
+use rand::rngs::OsRng;
+
+use sha2::Sha512;
+
 #[derive(Zeroize)]
 #[zeroize(drop)]
 pub struct NoncePair(pub(crate) Scalar, pub(crate) Scalar);
@@ -22,7 +26,7 @@ impl NoncePair {
     }
 }
 
-Impl From<NoncePair> for CommitmentShare {
+impl From<NoncePair> for CommitmentShare {
     fn from(&self) -> CommitmentShare {
         let x = &RISTRETTO_BASEPOINT_TABLE * &self.0;
         let y = &RISTRETTO_BASEPOINT_TABLE * &self.1;
@@ -31,13 +35,28 @@ Impl From<NoncePair> for CommitmentShare {
     }
 }
 
-// XXX TODO add names so we don’t fuck up and hand over the nonces
-pub struct CommitmentShare((pub(crate) Scalar, pub(crate) RistrettoPoint),
-                           (pub(crate) Scalar, pub(crate) RistrettoPoint));
+/// A pair of a nonce and a commitment to it.
+// XXX need zeroize impl
+#[derive(Debug, Clone)]
+pub struct Commitment {
+    /// The nonce.
+    pub(crate) nonce: Scalar,
+    /// The commitment.
+    pub sealed: RistrettoPoint,
+}
+
+/// A precomputed commitment share.
+pub struct CommitmentShare {
+    /// The hiding commitment.
+    pub(crate) hiding: Commitment,
+    /// The binding commitment.
+    pub(crate) binding: Commitment,
+}
+
 
 impl CommitmentShare {
     pub fn publish(&self) -> (RistrettoPoint, RistrettoPoint) {
-        (self.0.1, self.1.1) // Nothing could go wrong with these .0s and .1s!
+        (self.hiding.sealed, self.binding.sealed)
     }
 
     // pub fn generate(amount: u32) -> Vec

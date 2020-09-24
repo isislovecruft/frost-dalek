@@ -19,6 +19,7 @@ pub mod errors;
 pub mod keygen;
 pub mod parameters;
 pub mod nizk;
+pub mod signature;
 
 pub use errors::ProofError; // XXX fixme real error handling;
 pub use keygen::Participant;
