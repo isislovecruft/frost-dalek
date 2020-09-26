@@ -53,7 +53,6 @@ pub struct CommitmentShare {
     pub(crate) binding: Commitment,
 }
 
-
 impl CommitmentShare {
     pub fn publish(&self) -> (RistrettoPoint, RistrettoPoint) {
         (self.hiding.sealed, self.binding.sealed)
@@ -69,14 +68,12 @@ pub struct CommitmentShareList {
 
 impl CommitmentShareList {
     /// number_of_shares denotes the number of commitments published at a time
-    pub fn generate(participant_index: &u32, number_of_shares: &u32)
-    -> Vec<CommitmentShare>
-    {
+    pub fn generate(participant_index: &u32, number_of_shares: &u32) -> Vec<CommitmentShare> {
         let mut rng = OsRng;
 
         let shares: Vec<CommitmentShare> = Vec::with_capacity(number_of_shares as usize);
         for _ in number_of_shares {
-            shares.push(CommitmentShare::from(NoncePair::new(&mut rng));
+            shares.push(CommitmentShare::from(NoncePair::new(&mut rng)));
         }
         shares
     }
@@ -98,18 +95,15 @@ pub struct Signature(Scalar, Scalar);
 pub fn sign(
     message: &[u8],
     commitments: &Vec<(u32, RistrettoPoint, RistrettoPoint)>, // these are commitments that were published by each signing participant in an earlier phase
-) -> Signature
-{
+) -> Signature {
+    let binding_factors: Vec<Scalar> = Vec::with_capacity(commitments.len());
+    let mut R: RistrettoPoint = RistrettoPoint::identity();
+    for commitment in commitments.iter() {
+        let H = Sha512::new();
+        let binding_factor = H(commitment.index, m, B); // TODO actually do hashing
+        binding.factors.push(binding_factor);
 
-	let binding_factors: Vec<Scalar> = Vec::with_capacity(commitments.len());
-            let mut R: RistrettoPoint = RistrettoPoint::identity();
-	for commitment in commitments.iter() {
-                let H = Sha512::new();
-	    let binding_factor = H(commitment.index, m, B); // TODO actually do hashing
-	    binding.factors.push(binding_factor);
-
-                // THIS IS THE MAGIC STUFF ↓↓↓
-                R += commitment.0 + binding_factor * commitment.1; 
-}
-	
+        // THIS IS THE MAGIC STUFF ↓↓↓
+        R += commitment.0 + binding_factor * commitment.1;
+    }
 }

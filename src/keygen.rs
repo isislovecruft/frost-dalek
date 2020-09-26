@@ -101,7 +101,14 @@ impl Participant {
         let proof: NizkOfSecretKey = NizkOfSecretKey::prove(&index, &coefficients, &commitments[0]);
 
         // Step 4: Every participant P_i broadcasts C_i, \alpha_i to all other participants.
-        (Participant { index, commitments, proof_of_secret_key: proof }, coefficients)
+        (
+            Participant {
+                index,
+                commitments,
+                proof_of_secret_key: proof,
+            },
+            coefficients,
+        )
     }
 
     /// Retrieve \(( \alpha_{i0} * B \)), where \(( B \)) is the Ristretto basepoint.
@@ -121,7 +128,7 @@ impl Participant {
 //         }
 //     }
 // }
-// 
+//
 // impl PartialEq for Participant {
 //     fn eq(&self, other: &Participant) -> bool {
 //         self.index == other.index
@@ -217,9 +224,9 @@ impl DistributedKeyGeneration<RoundOne> {
         my_index: &u32,
         my_coefficients: &Coefficients,
         other_participants: &mut Vec<Participant>,
-    ) -> Result<Self, Vec<u32>>
-    {
-        let mut their_commitments: Vec<(u32, Vec<RistrettoPoint>)> = Vec::with_capacity(parameters.t as usize);
+    ) -> Result<Self, Vec<u32>> {
+        let mut their_commitments: Vec<(u32, Vec<RistrettoPoint>)> =
+            Vec::with_capacity(parameters.t as usize);
         let mut misbehaving_participants: Vec<u32> = Vec::new();
 
         // Bail if we didn't get enough participants.
@@ -234,13 +241,13 @@ impl DistributedKeyGeneration<RoundOne> {
         for p in other_participants.iter() {
             let public_key = match p.commitments.get(0) {
                 Some(key) => key,
-                None      => {
+                None => {
                     misbehaving_participants.push(p.index);
                     continue;
                 }
             };
             match p.proof_of_secret_key.verify(&p.index, &public_key) {
-                Ok(_)  => their_commitments.push((p.index, p.commitments.clone())),
+                Ok(_) => their_commitments.push((p.index, p.commitments.clone())),
                 Err(_) => misbehaving_participants.push(p.index),
             }
         }
@@ -291,8 +298,7 @@ impl DistributedKeyGeneration<RoundOne> {
     pub fn to_round_two(
         mut self,
         my_secret_shares: Vec<SecretShare>,
-    ) -> Result<DistributedKeyGeneration<RoundTwo>, ()>
-    {
+    ) -> Result<DistributedKeyGeneration<RoundTwo>, ()> {
         // Zero out the other participants secret shares from memory.
         if self.state.their_secret_shares.is_some() {
             self.state.their_secret_shares.unwrap().zeroize();
@@ -342,7 +348,10 @@ impl SecretShare {
             sum += coefficients.0[i] * term;
             term += term;
         }
-        SecretShare { index: *index, polynomial_evaluation: sum }
+        SecretShare {
+            index: *index,
+            polynomial_evaluation: sum,
+        }
     }
 
     /// Verify that this secret share was correctly computed w.r.t. some secret
@@ -393,12 +402,18 @@ impl DistributedKeyGeneration<RoundTwo> {
     /// participants.
     pub(crate) fn calculate_signing_key(&self) -> Result<SecretKey, ()> {
         let my_secret_shares = self.state.my_secret_shares.as_ref().ok_or(())?;
-        let mut key = my_secret_shares.iter().map(|x| x.polynomial_evaluation).sum();
+        let mut key = my_secret_shares
+            .iter()
+            .map(|x| x.polynomial_evaluation)
+            .sum();
 
         // XXX i think we're supposed to include the self-generated share?
         key += self.state.my_secret_share.polynomial_evaluation;
 
-        Ok(SecretKey { index: self.state.my_secret_share.index, key })
+        Ok(SecretKey {
+            index: self.state.my_secret_share.index,
+            key,
+        })
     }
 
     /// Calculate the group public key used for verifying threshold signatures.
@@ -406,7 +421,10 @@ impl DistributedKeyGeneration<RoundTwo> {
     /// # Returns
     ///
     /// A [`GroupKey`] for the set of participants.
-    pub(crate) fn calculate_group_key(&self, my_commitment: &RistrettoPoint) -> Result<GroupKey, ()> {
+    pub(crate) fn calculate_group_key(
+        &self,
+        my_commitment: &RistrettoPoint,
+    ) -> Result<GroupKey, ()> {
         let mut keys: Vec<RistrettoPoint> = Vec::with_capacity(self.state.parameters.n as usize);
 
         for commitment in self.state.their_commitments.iter() {
@@ -451,8 +469,7 @@ impl PublicShare {
         &self,
         parameters: &Parameters,
         commitments: &Vec<RistrettoPoint>,
-    ) -> Result<(), ()>
-    {
+    ) -> Result<(), ()> {
         let mut rhs = RistrettoPoint::identity();
 
         for j in 1..parameters.n {
@@ -510,36 +527,53 @@ mod test {
             let (p2, p2coeffs) = Participant::new(&params, 1);
             let (p3, p3coeffs) = Participant::new(&params, 2);
 
-            p2.proof_of_secret_key.verify(&p2.index, &p2.commitments[0])?;
-            p3.proof_of_secret_key.verify(&p3.index, &p3.commitments[0])?;
+            p2.proof_of_secret_key
+                .verify(&p2.index, &p2.commitments[0])?;
+            p3.proof_of_secret_key
+                .verify(&p3.index, &p3.commitments[0])?;
 
-            let mut p1_other_participants: Vec<Participant> = vec!(p2.clone(), p3.clone());
-            let p1_state = DistributedKeyGeneration::<RoundOne>::new(&params,
-                                                                     &p1.index,
-                                                                     &p1coeffs,
-                                                                     &mut p1_other_participants).or(Err(()))?;
+            let mut p1_other_participants: Vec<Participant> = vec![p2.clone(), p3.clone()];
+            let p1_state = DistributedKeyGeneration::<RoundOne>::new(
+                &params,
+                &p1.index,
+                &p1coeffs,
+                &mut p1_other_participants,
+            )
+            .or(Err(()))?;
             let p1_their_secret_shares = p1_state.their_secret_shares()?;
 
-            let mut p2_other_participants: Vec<Participant> = vec!(p1.clone(), p3.clone());
-            let p2_state = DistributedKeyGeneration::<RoundOne>::new(&params,
-                                                                     &p2.index,
-                                                                     &p2coeffs,
-                                                                     &mut p2_other_participants).or(Err(()))?;
+            let mut p2_other_participants: Vec<Participant> = vec![p1.clone(), p3.clone()];
+            let p2_state = DistributedKeyGeneration::<RoundOne>::new(
+                &params,
+                &p2.index,
+                &p2coeffs,
+                &mut p2_other_participants,
+            )
+            .or(Err(()))?;
             let p2_their_secret_shares = p2_state.their_secret_shares()?;
 
-            let mut p3_other_participants: Vec<Participant> = vec!(p1.clone(), p2.clone());
-            let  p3_state = DistributedKeyGeneration::<RoundOne>::new(&params,
-                                                                      &p3.index,
-                                                                      &p3coeffs,
-                                                                      &mut p3_other_participants).or(Err(()))?;
+            let mut p3_other_participants: Vec<Participant> = vec![p1.clone(), p2.clone()];
+            let p3_state = DistributedKeyGeneration::<RoundOne>::new(
+                &params,
+                &p3.index,
+                &p3coeffs,
+                &mut p3_other_participants,
+            )
+            .or(Err(()))?;
             let p3_their_secret_shares = p3_state.their_secret_shares()?;
 
-            let p1_my_secret_shares = vec!(p2_their_secret_shares[0].clone(), // XXX FIXME indexing
-                                           p3_their_secret_shares[0].clone());
-            let p2_my_secret_shares = vec!(p1_their_secret_shares[0].clone(),
-                                           p3_their_secret_shares[1].clone());
-            let p3_my_secret_shares = vec!(p1_their_secret_shares[1].clone(),
-                                           p2_their_secret_shares[1].clone());
+            let p1_my_secret_shares = vec![
+                p2_their_secret_shares[0].clone(), // XXX FIXME indexing
+                p3_their_secret_shares[0].clone(),
+            ];
+            let p2_my_secret_shares = vec![
+                p1_their_secret_shares[0].clone(),
+                p3_their_secret_shares[1].clone(),
+            ];
+            let p3_my_secret_shares = vec![
+                p1_their_secret_shares[1].clone(),
+                p2_their_secret_shares[1].clone(),
+            ];
 
             let p1_state = p1_state.to_round_two(p1_my_secret_shares)?;
             let p2_state = p2_state.to_round_two(p2_my_secret_shares)?;
