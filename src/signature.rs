@@ -9,8 +9,19 @@
 
 //! FROST signatures and their creation.
 
-use rand::rngs::OsRng;
+use curve25519_dalek::{
+    constants::{RISTRETTO_BASEPOINT_COMPRESSED, RISTRETTO_BASEPOINT_TABLE},
+    ristretto::RistrettoPoint,
+    scalar::Scalar,
+    traits::Identity,
+};
 
+use rand::rngs::OsRng;
+use rand_core::{CryptoRng, RngCore};
+
+use zeroize::Zeroize;
+
+use digest::Digest;
 use sha2::Sha512;
 
 #[derive(Zeroize)]
@@ -22,16 +33,25 @@ impl NoncePair {
     where
         C: CryptoRng + RngCore,
     {
-        NoncePair(Scalar::random(&mut csprng), Scalar::random(&mut csprng))
+        NoncePair(Scalar::random(csprng), Scalar::random(csprng))
     }
 }
 
 impl From<NoncePair> for CommitmentShare {
-    fn from(&self) -> CommitmentShare {
-        let x = &RISTRETTO_BASEPOINT_TABLE * &self.0;
-        let y = &RISTRETTO_BASEPOINT_TABLE * &self.1;
+    fn from(p: NoncePair) -> CommitmentShare {
+        let x = &RISTRETTO_BASEPOINT_TABLE * &p.0;
+        let y = &RISTRETTO_BASEPOINT_TABLE * &p.1;
 
-        CommitmentShare((self.0, x), (self.1, y))
+        CommitmentShare {
+            hiding: Commitment {
+                nonce: p.0,
+                sealed: x,
+            },
+            binding: Commitment {
+                nonce: p.1,
+                sealed: y,
+            },
+        }
     }
 }
 
@@ -71,8 +91,8 @@ impl CommitmentShareList {
     pub fn generate(participant_index: &u32, number_of_shares: &u32) -> Vec<CommitmentShare> {
         let mut rng = OsRng;
 
-        let shares: Vec<CommitmentShare> = Vec::with_capacity(number_of_shares as usize);
-        for _ in number_of_shares {
+        let mut shares: Vec<CommitmentShare> = Vec::with_capacity(*number_of_shares as usize);
+        for _ in 0..*number_of_shares {
             shares.push(CommitmentShare::from(NoncePair::new(&mut rng)));
         }
         shares
@@ -94,16 +114,23 @@ pub struct Signature(Scalar, Scalar);
 
 pub fn sign(
     message: &[u8],
-    commitments: &Vec<(u32, RistrettoPoint, RistrettoPoint)>, // these are commitments that were published by each signing participant in an earlier phase
+    // these are commitments that were published by each signing participant in an earlier phase
+    commitments: &Vec<(u32, RistrettoPoint, RistrettoPoint)>,
 ) -> Signature {
-    let binding_factors: Vec<Scalar> = Vec::with_capacity(commitments.len());
+    let mut binding_factors: Vec<Scalar> = Vec::with_capacity(commitments.len());
     let mut R: RistrettoPoint = RistrettoPoint::identity();
     for commitment in commitments.iter() {
-        let H = Sha512::new();
-        let binding_factor = H(commitment.index, m, B); // TODO actually do hashing
-        binding.factors.push(binding_factor);
+        let binding_factor = Scalar::from_hash(
+            Sha512::new()
+                .chain(commitment.0.to_le_bytes())
+                .chain(message)
+                .chain(RISTRETTO_BASEPOINT_COMPRESSED.as_bytes()),
+        );
+        binding_factors.push(binding_factor);
 
         // THIS IS THE MAGIC STUFF ↓↓↓
-        R += commitment.0 + binding_factor * commitment.1;
+        R += commitment.1 + binding_factor * commitment.2;
     }
+
+    unimplemented!()
 }

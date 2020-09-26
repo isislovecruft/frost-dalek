@@ -12,7 +12,7 @@
 //! [FROST]: https://eprint.iacr.org/2020/852
 
 #![warn(future_incompatible)]
-#![deny(missing_docs)]
+#![warn(missing_docs)]
 #![allow(non_snake_case)]
 
 pub mod errors;
