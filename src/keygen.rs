@@ -430,6 +430,7 @@ pub struct PublicShare {
     pub share: RistrettoPoint,
 }
 
+// XXX change the name of this struct to something more sensible like maybe "IndividualPublicKey"
 impl PublicShare {
     /// Any participant can compute the public verification share of any other participant.
     ///
