@@ -45,28 +45,10 @@ pub struct PartialThresholdSignature {
 /// A complete, aggregated threshold signature.
 pub struct ThresholdSignature(pub(crate) Scalar, pub(crate) Scalar);
 
-
-/// Compute an individual signer's [`PartialThresholdSignature`] contribution to
-/// a [`ThresholdSignature`] on a `message`.
-///
-/// # Inputs
-///
-/// * The `message` to be signed by every individual signer,
-/// * This signer's [`SecretKey`],
-/// * This signer's [`CommitmentShare`] being used in this instantiation, and
-/// * The list of all the currently participating [`Signer`]s.
-///
-/// # Returns
-///
-/// A [`PartialThresholdSignature`], which should be sent to the Signature
-/// Aggregator.
-// XXX How/when can this method ever fail?
-pub fn sign(
+fn compute_binding_factors_and_group_commitment(
     message: &[u8],
-    my_secret_key: &SecretKey,
-    my_commitment_share: &CommitmentShare,
     signers: &Vec<Signer>,
-) -> PartialThresholdSignature
+) -> (Vec<Scalar>, RistrettoPoint)
 {
 	let mut binding_factors: Vec<Scalar> = Vec::with_capacity(signers.len());
     let mut R: RistrettoPoint = RistrettoPoint::identity();
@@ -95,6 +77,33 @@ pub fn sign(
 
 	    binding_factors.push(binding_factor);
     }
+
+    (binding_factors, R)
+}
+
+/// Compute an individual signer's [`PartialThresholdSignature`] contribution to
+/// a [`ThresholdSignature`] on a `message`.
+///
+/// # Inputs
+///
+/// * The `message` to be signed by every individual signer,
+/// * This signer's [`SecretKey`],
+/// * This signer's [`CommitmentShare`] being used in this instantiation, and
+/// * The list of all the currently participating [`Signer`]s.
+///
+/// # Returns
+///
+/// A [`PartialThresholdSignature`], which should be sent to the Signature
+/// Aggregator.
+// XXX How/when can this method ever fail?
+pub fn sign(
+    message: &[u8],
+    my_secret_key: &SecretKey,
+    my_commitment_share: &CommitmentShare,
+    signers: &Vec<Signer>,
+) -> PartialThresholdSignature
+{
+    let (binding_factors, R) = compute_binding_factors_and_group_commitment(&message, &signers);
 
     let mut h2 = Sha512::new();
 
