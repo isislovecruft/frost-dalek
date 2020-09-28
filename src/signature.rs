@@ -72,8 +72,14 @@ pub fn sign(
         let hiding = signer.published_commitment_share.0;
         let binding = signer.published_commitment_share.1;
 
+        // XXX [CFRG] Should the hash function be hardcoded in the RFC or should
+        // we instead specify the output/block size?
+        //
+        // XXX [PAPER] Does the proof still work with sponges?
         let mut h1 = Sha512::new();
 
+        // [DIFFERENT_TO_PAPER] I added a context string.
+        h1.update(b"FROST-SHA512");
         h1.update(signer.participant_index.to_be_bytes());
         h1.update(message);
         h1.update(hiding.compress().as_bytes());
@@ -100,6 +106,8 @@ pub fn sign(
     // cycles recomputing our own blinding factor. :(
     let mut h3 = Sha512::new();
 
+    // [DIFFERENT_TO_PAPER] I added a context string.
+    h3.update(b"FROST-SHA512");
     h3.update(my_secret_key.index.to_be_bytes());
     h3.update(message);
     h3.update(my_commitment_share.hiding.sealed.compress().as_bytes());
@@ -107,12 +115,19 @@ pub fn sign(
 
     let my_binding_factor = Scalar::from_hash(h3);
 
-    // XXX Why are we adding yet another context for all the signers here when
-    // we already have the context in R and the challenge?
+    // XXX [PAPER] Why are we adding yet another context for all the signers
+    // here when we already have the context in R and the challenge?
     let lambda: Scalar = binding_factors.iter().sum();
     let z = my_commitment_share.hiding.nonce +
         (my_commitment_share.binding.nonce * my_binding_factor) +
         (lambda * my_secret_key.key * challenge); // XXX no likey lambda but ok
+
+    // XXX [DIFFERENT_TO_PAPER] TODO Need to instead pass in the commitment
+    // share list and zero-out the used commitment share, which means the
+    // signature aggregator needs to tell us somehow which one they picked from
+    // our published list.
+    //
+    // XXX ... I.... don't really love this API?
 
     PartialThresholdSignature(z)
 }
