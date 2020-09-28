@@ -18,6 +18,7 @@
 pub mod errors;
 pub mod keygen;
 pub mod parameters;
+pub mod precomputation;
 pub mod nizk;
 pub mod signature;
 
