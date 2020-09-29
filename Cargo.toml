@@ -13,9 +13,11 @@ sha2 = { version = "*" }
 zeroize = { version = "1", default-features = false, features = ["zeroize_derive"] }
 
 [features]
-default = ["u64_backend"]
+default = ["std", "u64_backend"]
 
 nightly = ["curve25519-dalek/nightly"]
+std = []
+alloc = []
 
 # The u32 backend uses u32s with u64 products.
 u32_backend = ["curve25519-dalek/u32_backend"]
