@@ -23,6 +23,9 @@ use curve25519_dalek::traits::Identity;
 use rand::CryptoRng;
 use rand::Rng;
 
+use subtle::Choice;
+use subtle::ConstantTimeEq;
+
 use zeroize::Zeroize;
 
 #[derive(Zeroize)]
@@ -54,7 +57,7 @@ impl From<NoncePair> for CommitmentShare {
 }
 
 /// A pair of a nonce and a commitment to it.
-#[derive(Debug, Clone)]
+#[derive(Clone, Debug)]
 pub(crate) struct Commitment {
     /// The nonce.
     pub(crate) nonce: Scalar,
@@ -72,6 +75,14 @@ impl Zeroize for Commitment {
 impl Drop for Commitment {
     fn drop(&mut self) {
         self.zeroize();
+    }
+}
+
+/// Test equality in constant-time.
+impl ConstantTimeEq for Commitment {
+    fn ct_eq(&self, other: &Commitment) -> Choice {
+        self.nonce.ct_eq(&other.nonce) &
+            self.sealed.compress().ct_eq(&other.sealed.compress())
     }
 }
 
