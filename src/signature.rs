@@ -14,12 +14,13 @@ use std::collections::HashMap;
 #[cfg(feature = "std")]
 use std::collections::hash_map::Values;
 #[cfg(feature = "std")]
+use std::cmp::Ordering;
+#[cfg(feature = "std")]
 use std::vec::Vec;
 
 use curve25519_dalek::constants::RISTRETTO_BASEPOINT_TABLE;
 use curve25519_dalek::ristretto::RistrettoPoint;
 use curve25519_dalek::scalar::Scalar;
-use curve25519_dalek::traits::Identity;
 
 use sha2::Digest;
 use sha2::Sha512;
@@ -41,12 +42,36 @@ use crate::precomputation::CommitmentShare;
 /// An individual signer in the threshold signature scheme.
 // XXX need sorting method
 // XXX need a constructor
+#[derive(Debug, Eq)]
 pub struct Signer {
     /// The participant index of this signer.
     pub participant_index: u32,
     /// One of the commitments that were published by each signing participant
     /// in the pre-computation phase.
     pub published_commitment_share: (RistrettoPoint, RistrettoPoint),
+}
+
+impl Ord for Signer {
+    fn cmp(&self, other: &Signer) -> Ordering {
+        self.partial_cmp(other).unwrap()
+    }
+}
+
+impl PartialOrd for Signer {
+    fn partial_cmp(&self, other: &Signer) -> Option<Ordering> {
+        match self.participant_index.cmp(&other.participant_index) {
+            Ordering::Less => Some(Ordering::Less),
+            // WARNING: Participants cannot have identical indices, so dedup() MUST be called.
+            Ordering::Equal => Some(Ordering::Equal),
+            Ordering::Greater => Some(Ordering::Greater),
+        }
+    }
+}
+
+impl PartialEq for Signer {
+    fn eq(&self, other: &Signer) -> bool {
+        self.participant_index == other.participant_index
+    }
 }
 
 /// A partially-constructed threshold signature, made by each participant in the
@@ -59,42 +84,62 @@ pub struct PartialThresholdSignature {
 /// A complete, aggregated threshold signature.
 pub struct ThresholdSignature(pub(crate) Scalar, pub(crate) Scalar);
 
-// XXX I hate this so much.
-//
-// XXX TODO there might be a more efficient way to optimise this data structure
-//     and its algorithms?
-struct SignerRs (pub(crate) HashMap<u32, RistrettoPoint>);
+macro_rules! impl_indexed_hashmap {
+    (Type = $type:ident, Item = $item:ident) => {
 
-impl SignerRs {
-    pub(crate) fn new() -> Self {
-        SignerRs(Hashmap::new())
+impl $type {
+    pub(crate) fn new() -> $type {
+        $type(HashMap::new())
     }
 
     // XXX [CFRG] Since the sorting order matters for the public API, both it
     // and the canonicalisation of the participant indices needs to be
     // specified.
-    pub(crate) fn insert(&mut self, index: &u32, point: &RistrettoPoint) {
+    pub(crate) fn insert(&mut self, index: &u32, point: $item) {
         self.0.insert(index.to_be_bytes(), point);
     }
 
-    pub(crate) fn get(&self, index: &u32) -> Option<RistrettoPoint> {
-        self.0.get(index.to_be_bytes())
+    pub(crate) fn get(&self, index: &u32) -> Option<&$item> {
+        self.0.get(&index.to_be_bytes())
     }
 
-    pub(crate) fn sorted(&self) -> Vec<(u32, RistrettoPoint)> {
-        let mut sorted: Vec<(u32, RistrettoPoint)> = Vec::with_capacity(self.0.len());
+    pub(crate) fn sorted(&self) -> Vec<(u32, $item)> {
+        let mut sorted: Vec<(u32, $item)> = Vec::with_capacity(self.0.len());
 
         for (i, point) in self.0.iter() {
-            let index = u32::from_be_bytes(i);
-            sorted.insert(index, (index, point));
+            let index = u32::from_be_bytes(*i);
+            sorted.insert(index as usize, (index, *point));
         }
         sorted
     }
 
-    pub(crate) fn values(&self) -> Values<'_, u32, RistrettoPoint> {
+    pub(crate) fn values(&self) -> Values<'_, [u8; 4], $item> {
         self.0.values()
     }
 }
+
+}} // END macro_rules! impl_indexed_hashmap
+
+/// A struct for storing signers' R values with the signer's participant index.
+// XXX I hate this so much.
+//
+// XXX TODO there might be a more efficient way to optimise this data structure
+//     and its algorithms?
+struct SignerRs(pub(crate) HashMap<[u8; 4], RistrettoPoint>);
+
+impl_indexed_hashmap!(Type = SignerRs, Item = RistrettoPoint);
+
+/// A type for storing signers' partial threshold signatures along with the
+/// respective signer participant index.
+pub struct PartialThresholdSignatures(pub(crate) HashMap<[u8; 4], Scalar>);
+
+impl_indexed_hashmap!(Type = PartialThresholdSignatures, Item = Scalar);
+
+/// A type for storing signers' individual public keys along with the respective
+/// signer participant index.
+pub(crate) struct IndividualPublicKeys(pub(crate) HashMap<[u8; 4], RistrettoPoint>);
+
+impl_indexed_hashmap!(Type = IndividualPublicKeys, Item = RistrettoPoint);
 
 fn compute_binding_factors_and_group_commitment(
     message: &[u8],
@@ -124,7 +169,7 @@ fn compute_binding_factors_and_group_commitment(
         let binding_factor = Scalar::from_hash(h1);
 
         // THIS IS THE MAGIC STUFF ↓↓↓
-        Rs.insert(signer.participant_index, hiding + (binding_factor * binding));
+        Rs.insert(&signer.participant_index, hiding + (binding_factor * binding));
 
 	    binding_factors.push(binding_factor);
     }
@@ -164,7 +209,7 @@ pub fn sign(
 ) -> PartialThresholdSignature
 {
     let (binding_factors, Rs) = compute_binding_factors_and_group_commitment(&message, &signers);
-    let R = Rs.iter().map(|x| x.1).collect().sum();
+    let R = Rs.values().sum();
     let challenge = compute_challenge(&message, &R);
 
     // XXX We can't use the participant index to index into the binding factors
@@ -210,53 +255,81 @@ pub struct SignatureAggregator<'sa> {
     /// The set of signing participants for this round.
     pub(crate) signers: Vec<Signer>,
     /// The signer's public keys for verifying their [`PartialThresholdSignature`].
-    pub(crate) public_keys: Vec<IndividualPublicKey>,
+    pub(crate) public_keys: IndividualPublicKeys,
     /// The message to be signed.
     pub(crate) message: &'sa [u8],
 }
 
-impl SignatureAggregator {
+impl SignatureAggregator<'_> {
     /// Construct a new signature aggregator from some protocol instantiation
     /// `parameters` and a `message` to be signed.
     pub fn new<'sa>(parameters: Parameters, message: &'sa [u8]) -> SignatureAggregator<'sa> {
         // XXX Can t here be some t' s.t. t ≤ t' ≤ n from the parameters?
         let signers: Vec<Signer> = Vec::with_capacity(parameters.t as usize);
-        let public_keys: Vec<IndividualPublicKey> = Vec::with_capacity(parameters.t as usize);
+        let public_keys: IndividualPublicKeys = IndividualPublicKeys::new();
 
         SignatureAggregator { parameters, signers, public_keys, message }
     }
 
     /// Include a signer in the protocol.
+    ///
+    /// # Panics
+    ///
+    /// If the `signer.participant_index` doesn't match the `public_key.index`.
     pub fn include_signer(&mut self, signer: Signer, public_key: IndividualPublicKey) {
+        assert_eq!(signer.participant_index, public_key.index);
+
         self.signers.push(signer);
-        self.public_keys.push(public_key);
+        self.public_keys.insert(&public_key.index, public_key.share);
     }
 
     /// Aggregate a set of partial signatures
     pub fn aggregate(
         &mut self,
-        partial_signatures: &Vec<PartialThresholdSignature>
+        partial_signatures: &PartialThresholdSignatures,
     ) -> Result<ThresholdSignature, Vec<u32>>
     {
-        //self.signers.sort(); // XXX need signers.sort() impl
+        self.signers.sort();
+        self.signers.dedup();
+
+        let mut misbehaving_participants: Vec<u32> = Vec::new();
         
+        if self.signers.len() != self.parameters.t {
+            return Err(misbehaving_participants);
+        }
+
         let (binding_factors, Rs) = compute_binding_factors_and_group_commitment(&self.message, &self.signers);
         let R = Rs.values().sum();
-        let challenge = compute_challenge(&self.message, &R);
+        let c = compute_challenge(&self.message, &R);
         let lambda: Scalar = binding_factors.iter().sum();
-
-        let misbehaving_participants: Vec<u32> = Vec::new();
+        let mut z = Scalar::zero();
 
         for signer in self.signers.iter() {
-            // XXX wrong index, impl on hashmap
-            let check = &RISTRETTO_BASEPOINT_TABLE * partial_signatures.get(signer.participant_index);
-            // XXX wrong index, impl on hashmap
-            let Y_i = public_keys.get(signer.participant_index);
+            // XXX [DIFFERENT_TO_PAPER] We're reporting missing partial
+            //     signatures which could possibly be the fault of the aggregator.
+            let partial_sig = match partial_signatures.get(&signer.participant_index) {
+                Some(x) => x,
+                None => {
+                    misbehaving_participants.push(signer.participant_index);
+                    continue;
+                },
+            };
+            let check = &RISTRETTO_BASEPOINT_TABLE * &partial_sig;
 
-            match Rs.get(signer.participant_index) {
+            // XXX TODO maybe we should be reporting strings so that we know the
+            // reason someone was "misbehaving".
+            let Y_i = match self.public_keys.get(&signer.participant_index) {
+                Some(x) => x,
+                None => {
+                    misbehaving_participants.push(signer.participant_index);
+                    continue;
+                }
+            };
+
+            match Rs.get(&signer.participant_index) {
                 Some(R_i) => {
-                    match check == R_i + &(&Y_i * (challenge * lambda)) { // XXX lambda why???
-                        true  => continue,
+                    match check == R_i + &(Y_i * (c * lambda)) { // XXX lambda why???
+                        true  => z += partial_sig,
                         false => misbehaving_participants.push(signer.participant_index),
                     }
                 },
@@ -267,7 +340,10 @@ impl SignatureAggregator {
             }
         }
 
-        unimplemented!()
+        match misbehaving_participants.len() > 0 {
+            true => Err(misbehaving_participants),
+            false => Ok(ThresholdSignature(z, c)),
+        }
     }
 }
 
