@@ -87,7 +87,7 @@ impl ConstantTimeEq for Commitment {
 }
 
 /// A precomputed commitment share.
-#[derive(Zeroize)]
+#[derive(Clone, Debug, Zeroize)]
 #[zeroize(drop)]
 pub struct CommitmentShare {
     /// The hiding commitment.
@@ -96,6 +96,12 @@ pub struct CommitmentShare {
     pub(crate) binding: Commitment,
 }
 
+/// Test equality in constant-time.
+impl ConstantTimeEq for CommitmentShare {
+    fn ct_eq(&self, other: &CommitmentShare) -> Choice {
+        self.hiding.ct_eq(&other.hiding) & self.binding.ct_eq(&other.binding)
+    }
+}
 
 impl CommitmentShare {
     /// Publish the public commitments in this [`CommitmentShare`].
@@ -125,37 +131,96 @@ pub struct PublicCommitmentShareList {
     pub commitments: Vec<(RistrettoPoint, RistrettoPoint)>,
 }
 
-impl PublicCommitmentShareList {
-    /// Pre-compute a list of [`CommitmentShares`] for single-round threshold signing.
-    ///
-    /// # Inputs
-    ///
-    /// * `participant_index` is the index of the threshold signing
-    ///   [`Participant`] who is publishing this share.
-    /// * `number_of_shares` denotes the number of commitments published at a time.
-    ///
-    /// # Returns
-    ///
-    /// A tuple of `(PublicCommitmentShareList, SecretCommitmentShareList)`
-    pub fn generate(
-        mut csprng: impl CryptoRng + Rng,
-        participant_index: u32,
-        number_of_shares: usize,
-    ) -> (PublicCommitmentShareList, SecretCommitmentShareList)
-    {
-        let mut commitments: Vec<CommitmentShare> = Vec::with_capacity(number_of_shares);
+/// Pre-compute a list of [`CommitmentShares`] for single-round threshold signing.
+///
+/// # Inputs
+///
+/// * `participant_index` is the index of the threshold signing
+///   [`Participant`] who is publishing this share.
+/// * `number_of_shares` denotes the number of commitments published at a time.
+///
+/// # Returns
+///
+/// A tuple of `(PublicCommitmentShareList, SecretCommitmentShareList)`.
+pub fn generate_commitment_share_lists(
+    mut csprng: impl CryptoRng + Rng,
+    participant_index: u32,
+    number_of_shares: usize,
+) -> (PublicCommitmentShareList, SecretCommitmentShareList)
+{
+    let mut commitments: Vec<CommitmentShare> = Vec::with_capacity(number_of_shares);
 
-        for _ in 0..number_of_shares {
-            commitments.push(CommitmentShare::from(NoncePair::new(&mut csprng)));
+    for _ in 0..number_of_shares {
+        commitments.push(CommitmentShare::from(NoncePair::new(&mut csprng)));
+    }
+
+    let mut published: Vec<(RistrettoPoint, RistrettoPoint)> = Vec::with_capacity(number_of_shares);
+
+    for n in 0..number_of_shares {
+        published.push(commitments[n].publish());
+    }
+
+    (PublicCommitmentShareList { participant_index, commitments: published },
+     SecretCommitmentShareList { participant_index, commitments })
+}
+
+impl SecretCommitmentShareList {
+    /// Drop a used [`CommitmentShare`] from our secret commitment share list
+    /// and ensure that it is wiped from memory.
+    pub fn drop_share(&mut self, share: &CommitmentShare) {
+        let mut index = -1;
+
+        // This is not constant-time in that the number of commitment shares in
+        // the list may be discovered via side channel, as well as the index of
+        // share to be deleted, as well as whether or not the share was in the
+        // list, but none of this gives any adversary that I can think of any
+        // advantage.
+        for (i, s) in self.commitments.iter().enumerate() {
+            if s.ct_eq(share).into() {
+                index = i as isize;
+            }
         }
-
-        let mut published: Vec<(RistrettoPoint, RistrettoPoint)> = Vec::with_capacity(number_of_shares);
-
-        for n in 0..number_of_shares {
-            published.push(commitments[n].publish());
+        if index >= 0 {
+            drop(self.commitments.remove(index as usize));
         }
+        drop(share);
+    }
+}
 
-        (PublicCommitmentShareList { participant_index, commitments: published },
-         SecretCommitmentShareList { participant_index, commitments })
+#[cfg(test)]
+mod test {
+    use super::*;
+
+    use rand::rngs::OsRng;
+
+    #[test]
+    fn nonce_pair() {
+        let nonce_pair = NoncePair::new(&mut OsRng);
+    }
+
+    #[test]
+    fn nonce_pair_into_commitment_share() {
+        let commitment_share: CommitmentShare = NoncePair::new(&mut OsRng).into();
+    }
+
+    #[test]
+    fn commitment_share_list_generate() {
+        let (public_share_list, secret_share_list) = generate_commitment_share_lists(&mut OsRng, 0, 5);
+
+        assert_eq!(public_share_list.commitments[0].0.compress(),
+                   (&secret_share_list.commitments[0].hiding.nonce * &RISTRETTO_BASEPOINT_TABLE).compress());
+    }
+
+    #[test]
+    fn drop_used_commitment_shares() {
+        let (public_share_list, mut secret_share_list) = generate_commitment_share_lists(&mut OsRng, 3, 8);
+
+        assert!(secret_share_list.commitments.len() == 8);
+
+        let used_share = secret_share_list.commitments[0].clone();
+
+        secret_share_list.drop_share(&used_share);
+
+        assert!(secret_share_list.commitments.len() == 7);
     }
 }
