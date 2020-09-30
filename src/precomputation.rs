@@ -18,6 +18,7 @@ use alloc::vec::Vec;
 use curve25519_dalek::constants::RISTRETTO_BASEPOINT_TABLE;
 use curve25519_dalek::ristretto::RistrettoPoint;
 use curve25519_dalek::scalar::Scalar;
+use curve25519_dalek::traits::Identity;
 
 use rand::CryptoRng;
 use rand::Rng;
@@ -53,7 +54,6 @@ impl From<NoncePair> for CommitmentShare {
 }
 
 /// A pair of a nonce and a commitment to it.
-// XXX need zeroize impl
 #[derive(Debug, Clone)]
 pub(crate) struct Commitment {
     /// The nonce.
@@ -62,7 +62,22 @@ pub(crate) struct Commitment {
     pub(crate) sealed: RistrettoPoint,
 }
 
+impl Zeroize for Commitment {
+    fn zeroize(&mut self) {
+        self.nonce.zeroize();
+        self.sealed = RistrettoPoint::identity();
+    }
+}
+
+impl Drop for Commitment {
+    fn drop(&mut self) {
+        self.zeroize();
+    }
+}
+
 /// A precomputed commitment share.
+#[derive(Zeroize)]
+#[zeroize(drop)]
 pub struct CommitmentShare {
     /// The hiding commitment.
     pub(crate) hiding: Commitment,
