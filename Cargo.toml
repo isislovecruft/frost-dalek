@@ -7,7 +7,7 @@ description = "FROST: Flexible Round-Optimised Threshold Signature using the Ris
 license = "MIT"
 
 [dependencies]
-curve25519-dalek = { version = "3", default-features = false, features = ["std"] }
+curve25519-dalek = { version = "3", default-features = false }
 rand = { version = "0.7" }
 sha2 = { version = "*" }
 zeroize = { version = "1", default-features = false, features = ["zeroize_derive"] }
@@ -16,8 +16,8 @@ zeroize = { version = "1", default-features = false, features = ["zeroize_derive
 default = ["std", "u64_backend"]
 
 nightly = ["curve25519-dalek/nightly"]
-std = []
-alloc = []
+std = ["curve25519-dalek/std"]
+alloc = ["curve25519-dalek/alloc"]
 
 # The u32 backend uses u32s with u64 products.
 u32_backend = ["curve25519-dalek/u32_backend"]

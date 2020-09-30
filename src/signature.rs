@@ -9,15 +9,12 @@
 
 //! FROST signatures and their creation.
 
-#[cfg(feature = "alloc")]
-use alloc::collections::HashMap;
-#[cfg(feature = "alloc")]
-use alloc::collections::hash_map::Values;
-
 #[cfg(feature = "std")]
 use std::collections::HashMap;
 #[cfg(feature = "std")]
 use std::collections::hash_map::Values;
+#[cfg(feature = "std")]
+use std::vec::Vec;
 
 use curve25519_dalek::constants::RISTRETTO_BASEPOINT_TABLE;
 use curve25519_dalek::ristretto::RistrettoPoint;
@@ -88,7 +85,7 @@ impl SignerRs {
         let mut sorted: Vec<(u32, RistrettoPoint)> = Vec::with_capacity(self.0.len());
 
         for (i, point) in self.0.iter() {
-            let index = u32::from_be_bytes(&i);
+            let index = u32::from_be_bytes(i);
             sorted.insert(index, (index, point));
         }
         sorted

@@ -11,17 +11,29 @@
 //!
 //! [FROST]: https://eprint.iacr.org/2020/852
 
+#![no_std]
 #![warn(future_incompatible)]
 #![deny(missing_docs)]
 #![allow(non_snake_case)]
+
+#[cfg(not(any(feature = "std", feature = "alloc")))]
+compile_error!("Either feature \"std\" or \"alloc\" must be enabled for this crate.");
+
+// We use the vec! macro in unittests.
+#[cfg(any(test, feature = "std"))]
+#[macro_use]
+extern crate std;
+
+#[cfg(feature = "alloc")]
+extern crate alloc;
 
 pub mod errors;
 pub mod keygen;
 pub mod parameters;
 pub mod precomputation;
 pub mod nizk;
-pub mod signature;
 
-pub use errors::ProofError; // XXX fixme real error handling;
-pub use keygen::Participant;
-pub use parameters::Parameters;
+// The signing protocol uses Hashmap (currently for the signature aggregator,
+// only), which requires std.
+#[cfg(any(test, feature = "std"))]
+pub mod signature;

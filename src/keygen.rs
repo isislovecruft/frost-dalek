@@ -15,8 +15,15 @@
 //! // XXX DOCDOC
 //! ```
 
+#[cfg(feature = "std")]
 use std::boxed::Box;
+#[cfg(feature = "std")]
 use std::vec::Vec;
+
+#[cfg(feature = "alloc")]
+use alloc::boxed::Box;
+#[cfg(feature = "alloc")]
+use alloc::vec::Vec;
 
 use curve25519_dalek::constants::RISTRETTO_BASEPOINT_TABLE;
 use curve25519_dalek::ristretto::RistrettoPoint;
@@ -28,7 +35,7 @@ use rand::rngs::OsRng;
 use zeroize::Zeroize;
 
 use crate::nizk::NizkOfSecretKey;
-use crate::Parameters;
+use crate::parameters::Parameters;
 
 /// A struct for holding a shard of the shared secret, in order to ensure that
 /// the shard is overwritten with zeroes when it falls out of scope.
