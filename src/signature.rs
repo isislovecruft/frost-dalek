@@ -106,6 +106,7 @@ impl $type {
         self.0.get(&index.to_be_bytes())
     }
 
+    #[allow(unused)]
     pub(crate) fn sorted(&self) -> Vec<(u32, $item)> {
         let mut sorted: Vec<(u32, $item)> = Vec::with_capacity(self.0.len());
 
@@ -116,6 +117,7 @@ impl $type {
         sorted
     }
 
+    #[allow(unused)]
     pub(crate) fn values(&self) -> Values<'_, [u8; 4], $item> {
         self.0.values()
     }
