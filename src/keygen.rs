@@ -429,7 +429,7 @@ impl DistributedKeyGeneration<RoundTwo> {
 }
 
 /// A public verification share for a participant.
-pub struct PublicShare {
+pub struct IndividualPublicKey {
     /// The participant index to which this key belongs.
     pub index: u32,
     /// The public verification share.
@@ -437,11 +437,10 @@ pub struct PublicShare {
     pub share: RistrettoPoint,
 }
 
-// XXX change the name of this struct to something more sensible like maybe "IndividualPublicKey"
-impl PublicShare {
+impl IndividualPublicKey {
     /// Any participant can compute the public verification share of any other participant.
     ///
-    /// This is done by re-computing this [`PublicShare`] as:
+    /// This is done by re-computing this [`IndividualPublicKey`] as:
     ///
     /// \(( Y_i = \Prod{j=1}{n} \Prod{k=0}{t-1} \phi_{jk}^{i^{k} \mod q} \))
     ///
@@ -449,7 +448,7 @@ impl PublicShare {
     ///
     /// * The [`Parameters`] of this threshold signing instance, and
     /// * A vector of `commitments` regarding the secret polynomial
-    ///   [`Coefficients`] that this [`PublicShare`] was generated with.
+    ///   [`Coefficients`] that this [`IndividualPublicKey`] was generated with.
     ///
     /// # Returns
     ///
@@ -482,11 +481,11 @@ pub struct SecretKey {
     pub(crate) key: Scalar,
 }
 
-impl From<SecretKey> for PublicShare {
-    fn from(source: SecretKey) -> PublicShare {
+impl From<&SecretKey> for IndividualPublicKey {
+    fn from(source: &SecretKey) -> IndividualPublicKey {
         let share = &RISTRETTO_BASEPOINT_TABLE * &source.key;
 
-        PublicShare {
+        IndividualPublicKey {
             index: source.index,
             share: share,
         }

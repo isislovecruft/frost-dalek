@@ -26,7 +26,7 @@ use sha2::Digest;
 use sha2::Sha512;
 
 use crate::keygen::GroupKey;
-use crate::keygen::PublicShare as IndividualPublicKey;
+use crate::keygen::IndividualPublicKey;
 use crate::keygen::SecretKey;
 use crate::parameters::Parameters;
 use crate::precomputation::CommitmentShare;
