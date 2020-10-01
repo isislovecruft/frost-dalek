@@ -386,7 +386,16 @@ impl ThresholdSignature {
     /// A `Result` whose `Ok` value is an empty tuple if the threshold signature
     /// was successfully verified, otherwise a vector of the participant indices
     /// of any misbehaving participants.
-    pub fn verify(&self, group_key: &GroupKey) -> Result<(), Vec<u32>> {
-        unimplemented!()
+    pub fn verify(&self, group_key: &GroupKey, message: &[u8]) -> Result<(), ()> {
+        let R_prime = (&RISTRETTO_BASEPOINT_TABLE * &self.z) + (group_key.0 * &-self.c);
+        let c_prime = compute_challenge(&message, &R_prime);
+
+        match self.c == c_prime {
+            true => Ok(()),
+            false => {
+                println!("c       is {:?}\nc_prime is {:?}", self.c, c_prime);
+                return Err(());
+            },
+        }
     }
 }
