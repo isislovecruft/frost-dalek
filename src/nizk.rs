@@ -13,6 +13,8 @@ use curve25519_dalek::constants::RISTRETTO_BASEPOINT_TABLE;
 use curve25519_dalek::ristretto::RistrettoPoint;
 use curve25519_dalek::scalar::Scalar;
 
+use rand::CryptoRng;
+use rand::Rng;
 use rand::rngs::OsRng;
 
 use sha2::Digest;
@@ -38,9 +40,14 @@ impl NizkOfSecretKey {
     /// as the secret key, such that \\( k \gets^{$} \mathbb{Z}_q \\),
     /// \\( M_i = g^k \\), \\( s_i = H(i, \phi, g^{a_{i0}}, M_i) \\),
     /// \\( r_i = k + a_{i0} \mdot s_i \\).
-    pub fn prove(index: &u32, coefficients: &Coefficients, public_key: &RistrettoPoint) -> Self {
-        let mut rng: OsRng = OsRng;
-        let k: Scalar = Scalar::random(&mut rng);
+    pub fn prove(
+        index: &u32,
+        secret_key: &Scalar,
+        public_key: &RistrettoPoint,
+        mut csprng: impl Rng + CryptoRng,
+    ) -> Self
+    {
+        let k: Scalar = Scalar::random(&mut csprng);
         let M: RistrettoPoint = &k * &RISTRETTO_BASEPOINT_TABLE;
 
         let mut hram = Sha512::new();
@@ -51,7 +58,7 @@ impl NizkOfSecretKey {
         hram.update(M.compress().as_bytes());
 
         let s = Scalar::from_hash(hram);
-        let r = k + (coefficients.0[0] * s);
+        let r = k + (secret_key * s);
 
         NizkOfSecretKey { s, r }
     }

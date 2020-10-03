@@ -20,6 +20,11 @@ use std::boxed::Box;
 #[cfg(feature = "std")]
 use std::vec::Vec;
 
+#[cfg(feature = "std")]
+use std::cmp::Ordering;
+#[cfg(not(feature = "std"))]
+use core::cmp::Ordering;
+
 #[cfg(feature = "alloc")]
 use alloc::boxed::Box;
 #[cfg(feature = "alloc")]
@@ -86,7 +91,7 @@ impl Participant {
         let mut coefficients: Vec<Scalar> = Vec::with_capacity(t);
         let mut commitments: Vec<RistrettoPoint> = Vec::with_capacity(t);
 
-        for _ in 0..t {
+        for _ in 0..t-1 {
             coefficients.push(Scalar::random(&mut rng));
         }
 
@@ -95,7 +100,7 @@ impl Participant {
         // Step 3: Every participant P_i computes a public commitment
         //         C_i = [\phi_{i0}, ..., \phi_{i(t-1)}], where \phi_{ij} = g^{a_{ij}},
         //         0 ≤ j ≤ t-1.
-        for j in 0..t {
+        for j in 0..t-1 {
             commitments.push(&coefficients.0[j] * &RISTRETTO_BASEPOINT_TABLE);
         }
 
@@ -105,7 +110,7 @@ impl Participant {
         //         a_{i0} by calculating a Schnorr signature \alpha_i = (s, R).  (In
         //         the FROST paper: \alpha_i = (\mu_i, c_i), but we stick with Schnorr's
         //         original notation here.)
-        let proof: NizkOfSecretKey = NizkOfSecretKey::prove(&index, &coefficients, &commitments[0]);
+        let proof: NizkOfSecretKey = NizkOfSecretKey::prove(&index, &coefficients.0[0], &commitments[0], rng);
 
         // Step 4: Every participant P_i broadcasts C_i, \alpha_i to all other participants.
         (Participant { index, commitments, proof_of_secret_key: proof }, coefficients)
@@ -119,21 +124,21 @@ impl Participant {
     }
 }
 
-// impl PartialOrd for Participant {
-//     fn partial_cmp(&self, other: &Participant) -> Option<Ordering> {
-//         match self.index.cmp(other.index) {
-//             Ordering::Less => Some(Ordering::Less),
-//             Ordering::Equal => None,  // Participants cannot have identical indices.
-//             Ordering::Greater => Some(Ordering::Greater),
-//         }
-//     }
-// }
-// 
-// impl PartialEq for Participant {
-//     fn eq(&self, other: &Participant) -> bool {
-//         self.index == other.index
-//     }
-// }
+impl PartialOrd for Participant {
+    fn partial_cmp(&self, other: &Participant) -> Option<Ordering> {
+        match self.index.cmp(&other.index) {
+            Ordering::Less => Some(Ordering::Less),
+            Ordering::Equal => None, // Participants cannot have the same index.
+            Ordering::Greater => Some(Ordering::Greater),
+        }
+    }
+}
+
+impl PartialEq for Participant {
+    fn eq(&self, other: &Participant) -> bool {
+        self.index == other.index
+    }
+}
 
 /// Module to implement trait sealing so that `DkgState` cannot be
 /// implemented for externally declared types.
@@ -341,13 +346,16 @@ pub struct SecretShare {
 
 impl SecretShare {
     /// Evaluate the polynomial, `f(x)` for the secret coefficients at the value of `x`.
+    //
+    // XXX [PAPER] [CFRG] The participant index CANNOT be 0, or the secret share ends up being Scalar::zero().
     pub(crate) fn evaluate_polynomial(index: &u32, coefficients: &Coefficients) -> SecretShare {
         let mut term: Scalar = (*index).into();
-        let mut sum: Scalar = coefficients.0[0]; // The first one is multiplied by index^0 = 1.
+        let mut sum: Scalar = Scalar::zero();
 
-        for i in 1..coefficients.0.len() {
-            sum += coefficients.0[i] * term;
-            term += term;
+        // Evaluate using Horner's method.
+        for i in (0..coefficients.0.len()).rev() {
+            sum += coefficients.0[i];
+            sum *= term;
         }
         SecretShare { index: *index, polynomial_evaluation: sum }
     }
@@ -357,11 +365,11 @@ impl SecretShare {
     pub(crate) fn verify(&self, commitments: &Vec<RistrettoPoint>) -> Result<(), ()> {
         let lhs = &RISTRETTO_BASEPOINT_TABLE * &self.polynomial_evaluation;
         let mut term: Scalar = self.index.into();
-        let mut rhs: RistrettoPoint = commitments[0];
+        let mut rhs: RistrettoPoint = RistrettoPoint::identity();
 
-        for i in 1..commitments.len() {
-            rhs += commitments[i] * term;
-            term += term;
+        for i in (0..commitments.len()).rev() {
+            rhs += commitments[i];
+            rhs *= term;
         }
 
         match lhs.compress() == rhs.compress() {
@@ -429,11 +437,13 @@ impl DistributedKeyGeneration<RoundTwo> {
 }
 
 /// A public verification share for a participant.
+///
+/// Any participant can recalculate the public verification share, which is the
+/// public half of a [`SecretKey`], of any other participant in the protocol.
 pub struct IndividualPublicKey {
     /// The participant index to which this key belongs.
     pub index: u32,
     /// The public verification share.
-    // XXX DOCDOC this docstring tells us nothing useful
     pub share: RistrettoPoint,
 }
 
@@ -509,13 +519,57 @@ mod test {
     }
 
     #[test]
+    fn secret_share_from_one_coefficients() {
+        let mut coeffs: Vec<Scalar> = Vec::new();
+
+        for _ in 0..5 {
+            coeffs.push(Scalar::one());
+        }
+
+        let coefficients = Coefficients(coeffs);
+        let share = SecretShare::evaluate_polynomial(&1, &coefficients);
+
+        assert!(share.polynomial_evaluation == Scalar::from(5u8));
+
+        let mut commitments: Vec<RistrettoPoint> = Vec::new();
+
+        for i in 0..5 {
+            commitments.push(&RISTRETTO_BASEPOINT_TABLE * &coefficients.0[i]);
+        }
+
+        assert!(share.verify(&commitments).is_ok());
+    }
+
+    #[test]
+    fn secret_share_participant_index_zero() {
+        let mut coeffs: Vec<Scalar> = Vec::new();
+
+        for _ in 0..5 {
+            coeffs.push(Scalar::one());
+        }
+
+        let coefficients = Coefficients(coeffs);
+        let share = SecretShare::evaluate_polynomial(&0, &coefficients);
+
+        assert!(share.polynomial_evaluation == Scalar::zero());
+
+        let mut commitments: Vec<RistrettoPoint> = Vec::new();
+
+        for i in 0..5 {
+            commitments.push(&RISTRETTO_BASEPOINT_TABLE * &coefficients.0[i]);
+        }
+
+        assert!(share.verify(&commitments).is_ok());
+    }
+
+    #[test]
     fn entire_keygen_protocol() {
         fn do_test() -> Result<(), ()> {
             let params = Parameters { n: 3, t: 2 };
 
-            let (p1, p1coeffs) = Participant::new(&params, 0);
-            let (p2, p2coeffs) = Participant::new(&params, 1);
-            let (p3, p3coeffs) = Participant::new(&params, 2);
+            let (p1, p1coeffs) = Participant::new(&params, 1);
+            let (p2, p2coeffs) = Participant::new(&params, 2);
+            let (p3, p3coeffs) = Participant::new(&params, 3);
 
             p2.proof_of_secret_key.verify(&p2.index, &p2.commitments[0])?;
             p3.proof_of_secret_key.verify(&p3.index, &p3.commitments[0])?;
