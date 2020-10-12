@@ -84,7 +84,7 @@ pub struct PartialThresholdSignature {
 /// A complete, aggregated threshold signature.
 pub struct ThresholdSignature {
     pub(crate) z: Scalar,
-    pub(crate) c: Scalar,
+    pub(crate) R: RistrettoPoint,
 }
 
 macro_rules! impl_indexed_hashmap {
@@ -149,25 +149,28 @@ impl_indexed_hashmap!(Type = IndividualPublicKeys, Item = RistrettoPoint);
 fn compute_binding_factors_and_group_commitment(
     message: &[u8],
     signers: &Vec<Signer>,
-) -> (Vec<Scalar>, SignerRs)
+) -> (HashMap<u32, Scalar>, SignerRs)
 {
-	let mut binding_factors: Vec<Scalar> = Vec::with_capacity(signers.len());
+	let mut binding_factors: HashMap<u32, Scalar> = HashMap::with_capacity(signers.len());
     let mut Rs: SignerRs = SignerRs::new(); // XXX can we optimise size?
+
+    // XXX [CFRG] Should the hash function be hardcoded in the RFC or should
+    // we instead specify the output/block size?
+    //
+    // XXX [PAPER] Does the proof still work with sponges?
+    let mut h = Sha512::new();
+
+    // [DIFFERENT_TO_PAPER] I added a context string and reordered to hash constants like the message first.
+    h.update(b"FROST-SHA512");
+    h.update(message);
 
     for signer in signers.iter() {
         let hiding = signer.published_commitment_share.0;
         let binding = signer.published_commitment_share.1;
 
-        // XXX [CFRG] Should the hash function be hardcoded in the RFC or should
-        // we instead specify the output/block size?
-        //
-        // XXX [PAPER] Does the proof still work with sponges?
-        let mut h1 = Sha512::new();
+        let mut h1 = h.clone();
 
-        // [DIFFERENT_TO_PAPER] I added a context string.
-        h1.update(b"FROST-SHA512");
         h1.update(signer.participant_index.to_be_bytes());
-        h1.update(message);
         h1.update(hiding.compress().as_bytes());
         h1.update(binding.compress().as_bytes());
 
@@ -175,8 +178,7 @@ fn compute_binding_factors_and_group_commitment(
 
         // THIS IS THE MAGIC STUFF ↓↓↓
         Rs.insert(&signer.participant_index, hiding + (binding_factor * binding));
-
-	    binding_factors.push(binding_factor);
+	    binding_factors.insert(signer.participant_index, binding_factor);
     }
 
     (binding_factors, Rs)
@@ -216,30 +218,16 @@ pub fn sign(
     let (binding_factors, Rs) = compute_binding_factors_and_group_commitment(&message, &signers);
     let R = Rs.values().sum();
     let challenge = compute_challenge(&message, &R);
-
-    // XXX We can't use the participant index to index into the binding factors
-    // here because the list of actual signers might be different than the total
-    // number of possible participants.  This means we need to waste a few
-    // cycles recomputing our own blinding factor. :(
-    //
-    // XXX FIXME Signers contains the participant index so we should return it from compute_binding..()
-    let mut h3 = Sha512::new();
-
-    // [DIFFERENT_TO_PAPER] I added a context string.
-    h3.update(b"FROST-SHA512");
-    h3.update(my_secret_key.index.to_be_bytes());
-    h3.update(message);
-    h3.update(my_commitment_share.hiding.sealed.compress().as_bytes());
-    h3.update(my_commitment_share.binding.sealed.compress().as_bytes());
-
-    let my_binding_factor = Scalar::from_hash(h3);
+    let my_binding_factor = binding_factors[&my_secret_key.index];
 
     // XXX [PAPER] Why are we adding yet another context for all the signers
     // here when we already have the context in R and the challenge?
-    let lambda: Scalar = binding_factors.iter().sum();
+    //
+    // XXX TODO Calculate the Lagrange interpolation for lambda instead.
+    let lambda: Scalar = signers.iter().fold(0, |acc, x| acc + x.participant_index).into();
     let z = my_commitment_share.hiding.nonce +
         (my_commitment_share.binding.nonce * my_binding_factor) +
-        (lambda * my_secret_key.key * challenge); // XXX no likey lambda but ok
+        (lambda * my_secret_key.key * challenge);
 
     // XXX [DIFFERENT_TO_PAPER] TODO Need to instead pass in the commitment
     // share list and zero-out the used commitment share, which means the
@@ -325,6 +313,7 @@ impl SignatureAggregator<'_> {
 
         let mut misbehaving_participants: Vec<u32> = Vec::new();
         
+        // XXX TODO Should actually check that the indices match.
         if self.signers.len() != self.parameters.t as usize {
             return Err(misbehaving_participants);
         }
@@ -332,7 +321,7 @@ impl SignatureAggregator<'_> {
         let (binding_factors, Rs) = compute_binding_factors_and_group_commitment(&self.message, &self.signers);
         let R = Rs.values().sum();
         let c = compute_challenge(&self.message, &R);
-        let lambda: Scalar = binding_factors.iter().sum();
+        let lambda: Scalar = self.signers.iter().fold(0, |acc, x| acc + x.participant_index).into();
         let mut z = Scalar::zero();
 
         for signer in self.signers.iter() {
@@ -373,7 +362,7 @@ impl SignatureAggregator<'_> {
 
         match misbehaving_participants.len() > 0 {
             true => Err(misbehaving_participants),
-            false => Ok(ThresholdSignature {z, c}),
+            false => Ok(ThresholdSignature {z, R}),
         }
     }
 }
@@ -387,15 +376,333 @@ impl ThresholdSignature {
     /// was successfully verified, otherwise a vector of the participant indices
     /// of any misbehaving participants.
     pub fn verify(&self, group_key: &GroupKey, message: &[u8]) -> Result<(), ()> {
-        let R_prime = (&RISTRETTO_BASEPOINT_TABLE * &self.z) + (group_key.0 * &-self.c);
-        let c_prime = compute_challenge(&message, &R_prime);
+        let c_prime = compute_challenge(&message, &self.R);
+        let R_prime = (&RISTRETTO_BASEPOINT_TABLE * &self.z) - (group_key.0 * &c_prime);
 
-        match self.c == c_prime {
+        match self.R.compress() == R_prime.compress() {
             true => Ok(()),
             false => {
-                println!("c       is {:?}\nc_prime is {:?}", self.c, c_prime);
+                println!("r       is {:?}\nr_prime is {:?}", self.R.compress(), R_prime.compress());
                 return Err(());
             },
         }
+    }
+}
+
+#[cfg(test)]
+mod test {
+    use super::*;
+
+    use crate::keygen::Participant;
+    use crate::keygen::{DistributedKeyGeneration, RoundOne, RoundTwo};
+    use crate::precomputation::generate_commitment_share_lists;
+
+    use rand::rngs::OsRng;
+
+    #[test]
+    fn signing_and_verification_single_party() {
+        let params = Parameters { n: 1, t: 1 };
+
+        let (p1, p1coeffs) = Participant::new(&params, 1);
+
+        p1.proof_of_secret_key.verify(&p1.index, &p1.commitments[0]).unwrap();
+
+        let mut p1_other_participants: Vec<Participant> = Vec::new();
+        let p1_state = DistributedKeyGeneration::<RoundOne>::new(&params,
+                                                                 &p1.index,
+                                                                 &p1coeffs,
+                                                                 &mut p1_other_participants).unwrap();
+        let p1_their_secret_shares = p1_state.their_secret_shares().unwrap();
+        let p1_my_secret_shares = Vec::new();
+        let p1_state = p1_state.to_round_two(p1_my_secret_shares).unwrap();
+
+        // XXX make a method for getting the public key share/commitment
+        let result = p1_state.finish(p1.public_key());
+
+        assert!(result.is_ok());
+
+        let (group_key, p1_sk) = result.unwrap();
+
+        let message = b"This is a test of the tsunami alert system. This is only a test.";
+        let (p1_public_comshares, p1_secret_comshares) = generate_commitment_share_lists(&mut OsRng, 1, 1);
+
+        let mut aggregator = SignatureAggregator::new(params, &message[..]);
+
+        aggregator.include_signer(1, p1_public_comshares.commitments[0], (&p1_sk).into());
+
+        let signers = aggregator.get_signers();
+
+        // XXX TODO SecretCommitmentShareList doesn't need to store the index
+        let p1_partial = sign(&message[..], &p1_sk, &p1_secret_comshares.commitments[0], signers);
+
+        aggregator.include_partial_signature(p1_partial);
+
+        // XXX TODO aggregator should be a new type here to ensure we have proper state.
+        let signing_result = aggregator.aggregate();
+
+        assert!(signing_result.is_ok());
+
+        let threshold_signature = signing_result.unwrap();
+
+        let verification_result = threshold_signature.verify(&group_key, &message[..]);
+
+        println!("{:?}", verification_result);
+
+        assert!(verification_result.is_ok());
+    }
+
+    #[test]
+    fn signing_and_verification_1_out_of_2() {
+        let params = Parameters { n: 2, t: 1 };
+
+        let (p1, p1coeffs) = Participant::new(&params, 1);
+        let (p2, p2coeffs) = Participant::new(&params, 2);
+
+        let mut p1_other_participants: Vec<Participant> = vec!(p2.clone());
+        let p1_state = DistributedKeyGeneration::<RoundOne>::new(&params,
+                                                                 &p1.index,
+                                                                 &p1coeffs,
+                                                                 &mut p1_other_participants).unwrap();
+        let p1_their_secret_shares = p1_state.their_secret_shares().unwrap();
+
+        let mut p2_other_participants: Vec<Participant> = vec!(p1.clone());
+        let p2_state = DistributedKeyGeneration::<RoundOne>::new(&params,
+                                                                 &p2.index,
+                                                                 &p2coeffs,
+                                                                 &mut p2_other_participants).unwrap();
+        let p2_their_secret_shares = p2_state.their_secret_shares().unwrap();
+
+        let p1_my_secret_shares = vec!(p2_their_secret_shares[0].clone()); // XXX FIXME indexing
+        let p2_my_secret_shares = vec!(p1_their_secret_shares[0].clone());
+
+        let p1_state = p1_state.to_round_two(p1_my_secret_shares).unwrap();
+        let p2_state = p2_state.to_round_two(p2_my_secret_shares).unwrap();
+
+        let (group_key, p1_sk) = p1_state.finish(p1.public_key()).unwrap();
+        let (_, p2_sk) = p2_state.finish(p2.public_key()).unwrap();
+
+        let message = b"This is a test of the tsunami alert system. This is only a test.";
+        let (p1_public_comshares, p1_secret_comshares) = generate_commitment_share_lists(&mut OsRng, 1, 1);
+
+        let mut aggregator = SignatureAggregator::new(params, &message[..]);
+
+        aggregator.include_signer(1, p1_public_comshares.commitments[0], (&p1_sk).into());
+
+        let signers = aggregator.get_signers();
+
+        // XXX TODO SecretCommitmentShareList doesn't need to store the index
+        let p1_partial = sign(&message[..], &p1_sk, &p1_secret_comshares.commitments[0], signers);
+
+        aggregator.include_partial_signature(p1_partial);
+
+        // XXX TODO aggregator should be a new type here to ensure we have proper state.
+        let threshold_signature = aggregator.aggregate().unwrap();
+        let verification_result = threshold_signature.verify(&group_key, &message[..]);
+
+        assert!(verification_result.is_ok());
+    }
+
+    #[test]
+    fn signing_and_verification_3_out_of_5() {
+        let params = Parameters { n: 5, t: 3 };
+
+        let (p1, p1coeffs) = Participant::new(&params, 1);
+        let (p2, p2coeffs) = Participant::new(&params, 2);
+        let (p3, p3coeffs) = Participant::new(&params, 3);
+        let (p4, p4coeffs) = Participant::new(&params, 4);
+        let (p5, p5coeffs) = Participant::new(&params, 5);
+
+        let mut p1_other_participants: Vec<Participant> = vec!(p2.clone(), p3.clone(), p4.clone(), p5.clone());
+        let p1_state = DistributedKeyGeneration::<RoundOne>::new(&params,
+                                                                 &p1.index,
+                                                                 &p1coeffs,
+                                                                 &mut p1_other_participants).unwrap();
+        let p1_their_secret_shares = p1_state.their_secret_shares().unwrap();
+
+        let mut p2_other_participants: Vec<Participant> = vec!(p1.clone(), p3.clone(), p4.clone(), p5.clone());
+        let p2_state = DistributedKeyGeneration::<RoundOne>::new(&params,
+                                                                 &p2.index,
+                                                                 &p2coeffs,
+                                                                 &mut p2_other_participants).unwrap();
+        let p2_their_secret_shares = p2_state.their_secret_shares().unwrap();
+
+        let mut p3_other_participants: Vec<Participant> = vec!(p1.clone(), p2.clone(), p4.clone(), p5.clone());
+        let p3_state = DistributedKeyGeneration::<RoundOne>::new(&params,
+                                                                 &p3.index,
+                                                                 &p3coeffs,
+                                                                 &mut p3_other_participants).unwrap();
+        let p3_their_secret_shares = p3_state.their_secret_shares().unwrap();
+
+        let mut p4_other_participants: Vec<Participant> = vec!(p1.clone(), p2.clone(), p3.clone(), p5.clone());
+        let p4_state = DistributedKeyGeneration::<RoundOne>::new(&params,
+                                                                 &p4.index,
+                                                                 &p4coeffs,
+                                                                 &mut p4_other_participants).unwrap();
+        let p4_their_secret_shares = p4_state.their_secret_shares().unwrap();
+
+        let mut p5_other_participants: Vec<Participant> = vec!(p1.clone(), p2.clone(), p3.clone(), p4.clone());
+        let p5_state = DistributedKeyGeneration::<RoundOne>::new(&params,
+                                                                 &p5.index,
+                                                                 &p5coeffs,
+                                                                 &mut p5_other_participants).unwrap();
+        let p5_their_secret_shares = p5_state.their_secret_shares().unwrap();
+
+        let p1_my_secret_shares = vec!(p2_their_secret_shares[0].clone(), // XXX FIXME indexing
+                                       p3_their_secret_shares[0].clone(),
+                                       p4_their_secret_shares[0].clone(),
+                                       p5_their_secret_shares[0].clone());
+
+        let p2_my_secret_shares = vec!(p1_their_secret_shares[0].clone(),
+                                       p3_their_secret_shares[1].clone(),
+                                       p4_their_secret_shares[1].clone(),
+                                       p5_their_secret_shares[1].clone());
+
+        let p3_my_secret_shares = vec!(p1_their_secret_shares[1].clone(),
+                                       p2_their_secret_shares[1].clone(),
+                                       p4_their_secret_shares[2].clone(),
+                                       p5_their_secret_shares[2].clone());
+
+        let p4_my_secret_shares = vec!(p1_their_secret_shares[2].clone(),
+                                       p2_their_secret_shares[2].clone(),
+                                       p3_their_secret_shares[2].clone(),
+                                       p5_their_secret_shares[3].clone());
+
+        let p5_my_secret_shares = vec!(p1_their_secret_shares[3].clone(),
+                                       p2_their_secret_shares[3].clone(),
+                                       p3_their_secret_shares[3].clone(),
+                                       p4_their_secret_shares[3].clone());
+
+        let p1_state = p1_state.to_round_two(p1_my_secret_shares).unwrap();
+        let p2_state = p2_state.to_round_two(p2_my_secret_shares).unwrap();
+        let p3_state = p3_state.to_round_two(p3_my_secret_shares).unwrap();
+        let p4_state = p4_state.to_round_two(p4_my_secret_shares).unwrap();
+        let p5_state = p5_state.to_round_two(p5_my_secret_shares).unwrap();
+
+        // XXX make a method for getting the public key share/commitment
+        let (group_key, p1_sk) = p1_state.finish(p1.public_key()).unwrap();
+        let (_, _) = p2_state.finish(p2.public_key()).unwrap();
+        let (_, p3_sk) = p3_state.finish(p3.public_key()).unwrap();
+        let (_, p4_sk) = p4_state.finish(p4.public_key()).unwrap();
+        let (_, _) = p5_state.finish(p5.public_key()).unwrap();
+
+        let message = b"This is a test of the tsunami alert system. This is only a test.";
+        let (p1_public_comshares, p1_secret_comshares) = generate_commitment_share_lists(&mut OsRng, 1, 1);
+        let (p3_public_comshares, p3_secret_comshares) = generate_commitment_share_lists(&mut OsRng, 3, 1);
+        let (p4_public_comshares, p4_secret_comshares) = generate_commitment_share_lists(&mut OsRng, 4, 1);
+
+        let mut aggregator = SignatureAggregator::new(params, &message[..]);
+
+        aggregator.include_signer(1, p1_public_comshares.commitments[0], (&p1_sk).into());
+        aggregator.include_signer(3, p3_public_comshares.commitments[0], (&p3_sk).into());
+        aggregator.include_signer(4, p4_public_comshares.commitments[0], (&p4_sk).into());
+
+        let signers = aggregator.get_signers();
+
+        // XXX TODO SecretCommitmentShareList doesn't need to store the index
+        let p1_partial = sign(&message[..], &p1_sk, &p1_secret_comshares.commitments[0], signers);
+        let p3_partial = sign(&message[..], &p3_sk, &p3_secret_comshares.commitments[0], signers);
+        let p4_partial = sign(&message[..], &p4_sk, &p4_secret_comshares.commitments[0], signers);
+
+        aggregator.include_partial_signature(p1_partial);
+        aggregator.include_partial_signature(p3_partial);
+        aggregator.include_partial_signature(p4_partial);
+
+        // XXX TODO aggregator should be a new type here to ensure we have proper state.
+        let threshold_signature = aggregator.aggregate().unwrap();
+        let verification_result = threshold_signature.verify(&group_key, &message[..]);
+
+        assert!(verification_result.is_ok());
+    }
+
+    #[test]
+    fn signing_and_verification_2_out_of_3() {
+        fn do_keygen() -> Result<(Parameters, SecretKey, SecretKey, SecretKey, GroupKey), ()> {
+            let params = Parameters { n: 3, t: 2 };
+
+            let (p1, p1coeffs) = Participant::new(&params, 1);
+            let (p2, p2coeffs) = Participant::new(&params, 2);
+            let (p3, p3coeffs) = Participant::new(&params, 3);
+
+            p2.proof_of_secret_key.verify(&p2.index, &p2.commitments[0])?;
+            p3.proof_of_secret_key.verify(&p3.index, &p3.commitments[0])?;
+
+            let mut p1_other_participants: Vec<Participant> = vec!(p2.clone(), p3.clone());
+            let p1_state = DistributedKeyGeneration::<RoundOne>::new(&params,
+                                                                     &p1.index,
+                                                                     &p1coeffs,
+                                                                     &mut p1_other_participants).or(Err(()))?;
+            let p1_their_secret_shares = p1_state.their_secret_shares()?;
+
+            let mut p2_other_participants: Vec<Participant> = vec!(p1.clone(), p3.clone());
+            let p2_state = DistributedKeyGeneration::<RoundOne>::new(&params,
+                                                                     &p2.index,
+                                                                     &p2coeffs,
+                                                                     &mut p2_other_participants).or(Err(()))?;
+            let p2_their_secret_shares = p2_state.their_secret_shares()?;
+
+            let mut p3_other_participants: Vec<Participant> = vec!(p1.clone(), p2.clone());
+            let  p3_state = DistributedKeyGeneration::<RoundOne>::new(&params,
+                                                                      &p3.index,
+                                                                      &p3coeffs,
+                                                                      &mut p3_other_participants).or(Err(()))?;
+            let p3_their_secret_shares = p3_state.their_secret_shares()?;
+
+            let p1_my_secret_shares = vec!(p2_their_secret_shares[0].clone(), // XXX FIXME indexing
+                                           p3_their_secret_shares[0].clone());
+            let p2_my_secret_shares = vec!(p1_their_secret_shares[0].clone(),
+                                           p3_their_secret_shares[1].clone());
+            let p3_my_secret_shares = vec!(p1_their_secret_shares[1].clone(),
+                                           p2_their_secret_shares[1].clone());
+
+            let p1_state = p1_state.to_round_two(p1_my_secret_shares)?;
+            let p2_state = p2_state.to_round_two(p2_my_secret_shares)?;
+            let p3_state = p3_state.to_round_two(p3_my_secret_shares)?;
+
+            // XXX make a method for getting the public key share/commitment
+            let (p1_group_key, p1_secret_key) = p1_state.finish(p1.public_key())?;
+            let (p2_group_key, p2_secret_key) = p2_state.finish(p2.public_key())?;
+            let (p3_group_key, p3_secret_key) = p3_state.finish(p3.public_key())?;
+
+            assert!(p1_group_key.0.compress() == p2_group_key.0.compress());
+            assert!(p2_group_key.0.compress() == p3_group_key.0.compress());
+
+            Ok((params, p1_secret_key, p2_secret_key, p3_secret_key, p1_group_key))
+        }
+        let keygen_protocol = do_keygen();
+
+        assert!(keygen_protocol.is_ok());
+
+        let (params, p1_sk, p2_sk, p3_sk, group_key) = keygen_protocol.unwrap();
+
+        let message = b"This is a test of the tsunami alert system. This is only a test.";
+        let (p1_public_comshares, p1_secret_comshares) = generate_commitment_share_lists(&mut OsRng, 1, 1);
+        let (p2_public_comshares, p2_secret_comshares) = generate_commitment_share_lists(&mut OsRng, 2, 1);
+
+        let mut aggregator = SignatureAggregator::new(params, &message[..]);
+
+        aggregator.include_signer(1, p1_public_comshares.commitments[0], (&p1_sk).into());
+        aggregator.include_signer(2, p2_public_comshares.commitments[0], (&p2_sk).into());
+
+        let signers = aggregator.get_signers();
+
+        // XXX TODO SecretCommitmentShareList doesn't need to store the index
+        let p1_partial = sign(&message[..], &p1_sk, &p1_secret_comshares.commitments[0], signers);
+        let p2_partial = sign(&message[..], &p2_sk, &p2_secret_comshares.commitments[0], signers);
+
+        aggregator.include_partial_signature(p1_partial);
+        aggregator.include_partial_signature(p2_partial);
+
+        // XXX TODO aggregator should be a new type here to ensure we have proper state.
+        let signing_result = aggregator.aggregate();
+
+        assert!(signing_result.is_ok());
+
+        let threshold_signature = signing_result.unwrap();
+
+        let verification_result = threshold_signature.verify(&group_key, &message[..]);
+
+        println!("{:?}", verification_result);
+
+        assert!(verification_result.is_ok());
     }
 }
