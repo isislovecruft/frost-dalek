@@ -48,6 +48,18 @@ use crate::parameters::Parameters;
 #[zeroize(drop)]
 pub struct Coefficients(pub(crate) Vec<Scalar>);
 
+/// A commitment to the dealer's secret polynomial coefficients for Feldman's
+/// verifiable secret sharing scheme.
+#[derive(Debug)]
+pub struct VerifiableSecretSharingCommitment(pub(crate) Vec<RistrettoPoint>);
+
+/// DOCDOC A participant created by a trusted dealer.
+pub struct DealtParticipant {
+    pub(crate) secret_share: SecretShare,
+    pub(crate) public_key: IndividualPublicKey,
+    pub(crate) group_key: RistrettoPoint,
+}
+
 /// A participant in a threshold signing.
 #[derive(Clone, Debug)]
 pub struct Participant {
@@ -63,6 +75,58 @@ pub struct Participant {
 }
 
 impl Participant {
+    /// Have a trusted dealer generate all participants' key material and
+    /// associated commitments for distribution to the participants.
+    ///
+    /// # Warning
+    ///
+    /// Each participant MUST verify with all other n-1 participants that the
+    /// [`VerifiableSecretSharingCommitment`] given to them by the dealer is
+    /// identical.  Otherwise, the participants' secret shares could be formed
+    /// with respect to different polynomials and they will fail to create
+    /// threshold signatures which validate.
+    pub fn dealer(parameters: &Parameters) -> (Vec<DealtParticipant>, VerifiableSecretSharingCommitment) {
+        let participants: Vec<DealtParticipant> = Vec::with_capacity(parameters.n as usize);
+
+        // STEP 1: Every participant P_i samples t random values (a_{i0}, ..., a_{i(t-1)})
+        //         uniformly in ZZ_q, and uses these values as coefficients to define a
+        //         polynomial f_i(x) = \sum_{j=0}^{t-1} a_{ij} x^{j} of degree t-1 over
+        //         ZZ_q.
+        let t: usize = parameters.t as usize;
+        let mut rng: OsRng = OsRng;
+        let mut coefficients: Vec<Scalar> = Vec::with_capacity(t as usize);
+        let mut commitment = VerifiableSecretSharingCommitment(Vec::with_capacity(t as usize));
+
+        for _ in 0..t {
+            coefficients.push(Scalar::random(&mut rng));
+        }
+
+        let coefficients = Coefficients(coefficients);
+
+        // Step 3: Every participant P_i computes a public commitment
+        //         C_i = [\phi_{i0}, ..., \phi_{i(t-1)}], where \phi_{ij} = g^{a_{ij}},
+        //         0 ≤ j ≤ t-1.
+        for j in 0..t {
+            commitment.0.push(&coefficients.0[j] * &RISTRETTO_BASEPOINT_TABLE);
+        }
+
+        // Generate secret shares here
+        let group_key = &RISTRETTO_BASEPOINT_TABLE * &coefficients.0[0];
+        let mut participants: Vec<DealtParticipant> = Vec::with_capacity(parameters.n as usize);
+
+        // Only one polynomial because dealer, then secret shards are dependent upon index.
+        for i in 1..parameters.n + 1 {
+            let secret_share = SecretShare::evaluate_polynomial(&i, &coefficients);
+            let public_key = IndividualPublicKey {
+                index: i,
+                share: &RISTRETTO_BASEPOINT_TABLE * &secret_share.polynomial_evaluation,
+            };
+
+            participants.push(DealtParticipant { secret_share, public_key, group_key });
+        }
+        (participants, commitment)
+    }
+
     /// Construct a new participant for the distributed key generation protocol.
     ///
     /// # Inputs
@@ -166,7 +230,7 @@ struct ActualState {
     /// A vector of tuples containing the index of each participant and that
     /// respective participant's commitments to their private polynomial
     /// coefficients.
-    their_commitments: Vec<(u32, Vec<RistrettoPoint>)>,
+    their_commitments: Vec<(u32, VerifiableSecretSharingCommitment)>,
     /// A secret share for this participant.
     my_secret_share: SecretShare,
     /// The secret shares this participant has calculated for all the other participants.
@@ -232,7 +296,7 @@ impl DistributedKeyGeneration<RoundOne> {
         other_participants: &mut Vec<Participant>,
     ) -> Result<Self, Vec<u32>>
     {
-        let mut their_commitments: Vec<(u32, Vec<RistrettoPoint>)> = Vec::with_capacity(parameters.t as usize);
+        let mut their_commitments: Vec<(u32, VerifiableSecretSharingCommitment)> = Vec::with_capacity(parameters.t as usize);
         let mut misbehaving_participants: Vec<u32> = Vec::new();
 
         // Bail if we didn't get enough participants.
@@ -253,7 +317,7 @@ impl DistributedKeyGeneration<RoundOne> {
                 }
             };
             match p.proof_of_secret_key.verify(&p.index, &public_key) {
-                Ok(_)  => their_commitments.push((p.index, p.commitments.clone())),
+                Ok(_)  => their_commitments.push((p.index, VerifiableSecretSharingCommitment(p.commitments.clone()))),
                 Err(_) => misbehaving_participants.push(p.index),
             }
         }
@@ -322,9 +386,9 @@ impl DistributedKeyGeneration<RoundOne> {
         //         aborting if the check fails.
         for share in my_secret_shares.iter() {
             // XXX TODO implement sorting for SecretShare and also for a new Commitment type
-            for (index, commitments) in self.state.their_commitments.iter() {
+            for (index, commitment) in self.state.their_commitments.iter() {
                 if index == &share.index {
-                    share.verify(&commitments)?;
+                    share.verify(commitment)?;
                 }
             }
         }
@@ -366,13 +430,13 @@ impl SecretShare {
     }
 
     /// Verify that this secret share was correctly computed w.r.t. some secret
-    /// polynomial coefficients attested to by some `commitments`.
-    pub(crate) fn verify(&self, commitments: &Vec<RistrettoPoint>) -> Result<(), ()> {
+    /// polynomial coefficients attested to by some `commitment`.
+    pub(crate) fn verify(&self, commitment: &VerifiableSecretSharingCommitment) -> Result<(), ()> {
         let lhs = &RISTRETTO_BASEPOINT_TABLE * &self.polynomial_evaluation;
         let mut term: Scalar = self.index.into();
         let mut rhs: RistrettoPoint = RistrettoPoint::identity();
 
-        for commitment in commitments.iter().rev() {
+        for commitment in commitment.0.iter().rev() {
             rhs += commitment;
             rhs *= term;
         }
@@ -430,7 +494,7 @@ impl DistributedKeyGeneration<RoundTwo> {
         let mut keys: Vec<RistrettoPoint> = Vec::with_capacity(self.state.parameters.n as usize);
 
         for commitment in self.state.their_commitments.iter() {
-            match commitment.1.get(0) {
+            match commitment.1.0.get(0) {
                 Some(key) => keys.push(*key),
                 None => return Err(()),
             }
@@ -514,6 +578,20 @@ pub struct GroupKey(pub(crate) RistrettoPoint);
 mod test {
     use super::*;
 
+    use crate::precomputation::generate_commitment_share_lists;
+    use crate::signature::sign;
+    use crate::signature::SignatureAggregator;
+
+    #[test]
+    #[ignore]
+    fn verify_share() {
+        let params = Parameters { n: 3, t: 2 };
+        let (p, coeffs) = Participant::new(&params, 0);
+        let secret_share = SecretShare::evaluate_polynomial(&0, &coeffs);
+
+        // assert!(secret_share.verify(XXX need VSS commitment));
+    }
+
     #[test]
     fn nizk_of_secret_key() {
         let params = Parameters { n: 3, t: 2 };
@@ -521,6 +599,74 @@ mod test {
         let result = p.proof_of_secret_key.verify(&p.index, &p.commitments[0]);
 
         assert!(result.is_ok());
+    }
+
+    #[test]
+    fn dkg_with_dealer() {
+        let params = Parameters { t: 1, n: 2 };
+        let (participants, commitment) = Participant::dealer(&params);
+
+        // Verify each of the participants' secret shares.
+        for p in participants.iter() {
+            let result = p.secret_share.verify(&commitment);
+
+            assert!(result.is_ok(), "participant {} failed to receive a valid secret share", p.public_key.index);
+        }
+    }
+
+    #[test]
+    fn dkg_with_dealer_and_signing() {
+        let params = Parameters { t: 1, n: 2 };
+        let (participants, commitment) = Participant::dealer(&params);
+
+        // Verify each of the participants' secret shares.
+        for p in participants.iter() {
+            let result = p.secret_share.verify(&commitment);
+
+            assert!(result.is_ok(), "participant {} failed to receive a valid secret share", p.public_key.index);
+        }
+
+        let message = b"This is a test of the tsunami alert system. This is only a test.";
+        let (p1_public_comshares, p1_secret_comshares) = generate_commitment_share_lists(&mut OsRng, 1, 1);
+        let (p2_public_comshares, p2_secret_comshares) = generate_commitment_share_lists(&mut OsRng, 2, 1);
+
+        let p1_sk = SecretKey {
+            index: participants[0].secret_share.index,
+            key: participants[0].secret_share.polynomial_evaluation,
+        };
+        let p2_sk = SecretKey {
+            index: participants[1].secret_share.index,
+            key: participants[1].secret_share.polynomial_evaluation,
+        };
+
+        let group_key = GroupKey(participants[0].group_key);
+
+        let mut aggregator = SignatureAggregator::new(params, &message[..]);
+
+        aggregator.include_signer(1, p1_public_comshares.commitments[0], (&p1_sk).into());
+        aggregator.include_signer(2, p2_public_comshares.commitments[0], (&p2_sk).into());
+
+        let signers = aggregator.get_signers();
+
+        // XXX TODO SecretCommitmentShareList doesn't need to store the index
+        let p1_partial = sign(&message[..], &p1_sk, &p1_secret_comshares.commitments[0], signers).unwrap();
+        let p2_partial = sign(&message[..], &p2_sk, &p2_secret_comshares.commitments[0], signers).unwrap();
+
+        aggregator.include_partial_signature(p1_partial);
+        aggregator.include_partial_signature(p2_partial);
+
+        // XXX TODO aggregator should be a new type here to ensure we have proper state.
+        let signing_result = aggregator.aggregate();
+
+        assert!(signing_result.is_ok());
+
+        let threshold_signature = signing_result.unwrap();
+
+        let verification_result = threshold_signature.verify(&group_key, &message[..]);
+
+        println!("{:?}", verification_result);
+
+        assert!(verification_result.is_ok());
     }
 
     #[test]
@@ -536,10 +682,10 @@ mod test {
 
         assert!(share.polynomial_evaluation == Scalar::from(5u8));
 
-        let mut commitments: Vec<RistrettoPoint> = Vec::new();
+        let mut commitments = VerifiableSecretSharingCommitment(Vec::new());
 
         for i in 0..5 {
-            commitments.push(&RISTRETTO_BASEPOINT_TABLE * &coefficients.0[i]);
+            commitments.0.push(&RISTRETTO_BASEPOINT_TABLE * &coefficients.0[i]);
         }
 
         assert!(share.verify(&commitments).is_ok());
@@ -558,10 +704,10 @@ mod test {
 
         assert!(share.polynomial_evaluation == Scalar::zero());
 
-        let mut commitments: Vec<RistrettoPoint> = Vec::new();
+        let mut commitments = VerifiableSecretSharingCommitment(Vec::new());
 
         for i in 0..5 {
-            commitments.push(&RISTRETTO_BASEPOINT_TABLE * &coefficients.0[i]);
+            commitments.0.push(&RISTRETTO_BASEPOINT_TABLE * &coefficients.0[i]);
         }
 
         assert!(share.verify(&commitments).is_ok());
