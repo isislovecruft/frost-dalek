@@ -145,8 +145,21 @@ pub(crate) struct IndividualPublicKeys(pub(crate) HashMap<[u8; 4], RistrettoPoin
 
 impl_indexed_hashmap!(Type = IndividualPublicKeys, Item = RistrettoPoint);
 
+/// Compute a Sha-512 hash of a message.
+pub fn compute_message_hash(context_string: &[u8], message: &[u8]) -> [u8; 64] {
+    let mut h = Sha512::new();
+
+    h.update(context_string);
+    h.update(message);
+
+    let mut output = [0u8; 64];
+
+    output.copy_from_slice(h.finalize().as_slice());
+    output
+}
+
 fn compute_binding_factors_and_group_commitment(
-    message: &[u8],
+    message_hash: &[u8; 64],
     signers: &Vec<Signer>,
 ) -> (HashMap<u32, Scalar>, SignerRs)
 {
@@ -159,9 +172,10 @@ fn compute_binding_factors_and_group_commitment(
     // XXX [PAPER] Does the proof still work with sponges?
     let mut h = Sha512::new();
 
-    // [DIFFERENT_TO_PAPER] I added a context string and reordered to hash constants like the message first.
+    // [DIFFERENT_TO_PAPER] I added a context string and reordered to hash
+    // constants like the message first.
     h.update(b"FROST-SHA512");
-    h.update(message);
+    h.update(message_hash);
 
     for signer in signers.iter() {
         let hiding = signer.published_commitment_share.0;
@@ -183,10 +197,11 @@ fn compute_binding_factors_and_group_commitment(
     (binding_factors, Rs)
 }
 
-fn compute_challenge(message: &[u8], R: &RistrettoPoint) -> Scalar {
+fn compute_challenge(message_hash: &[u8; 64], R: &RistrettoPoint) -> Scalar {
     let mut h2 = Sha512::new();
 
-    h2.update(message);
+    h2.update(b"FROST-SHA512");
+    h2.update(message_hash);
     h2.update(R.compress().as_bytes());
 
     Scalar::from_hash(h2)
@@ -229,7 +244,9 @@ fn calculate_lagrange_coefficients(
 ///
 /// # Inputs
 ///
-/// * The `message` to be signed by every individual signer,
+/// * The `message_hash` to be signed by every individual signer, this should be
+///   the `Sha512` digest of the message, optionally along with some application-specific
+///   context string.
 /// * This signer's [`SecretKey`],
 /// * This signer's [`CommitmentShare`] being used in this instantiation, and
 /// * The list of all the currently participating [`Signer`]s.
@@ -240,15 +257,15 @@ fn calculate_lagrange_coefficients(
 /// Aggregator.
 // XXX How/when can this method ever fail?
 pub fn sign(
-    message: &[u8],
+    message_hash: &[u8; 64],
     my_secret_key: &SecretKey,
     my_commitment_share: &CommitmentShare,
     signers: &Vec<Signer>,
 ) -> Result<PartialThresholdSignature, &'static str>
 {
-    let (binding_factors, Rs) = compute_binding_factors_and_group_commitment(&message, &signers);
+    let (binding_factors, Rs) = compute_binding_factors_and_group_commitment(&message_hash, &signers);
     let R = Rs.values().sum();
-    let challenge = compute_challenge(&message, &R);
+    let challenge = compute_challenge(&message_hash, &R);
     let my_binding_factor = binding_factors[&my_secret_key.index];
 
     // XXX [PAPER] Why are we adding yet another context for all the signers
@@ -358,9 +375,11 @@ impl SignatureAggregator<'_> {
             return Err(misbehaving_participants);
         }
 
-        let (binding_factors, Rs) = compute_binding_factors_and_group_commitment(&self.message, &self.signers);
+        // XXX TODO allow application specific context strings.
+        let message_hash = compute_message_hash(b"XXX MAKE A REAL CONTEXT STRING", &self.message);
+        let (binding_factors, Rs) = compute_binding_factors_and_group_commitment(&message_hash, &self.signers);
         let R = Rs.values().sum();
-        let c = compute_challenge(&self.message, &R);
+        let c = compute_challenge(&message_hash, &R);
         let all_participant_indices = self.signers.iter().map(|x| x.participant_index).collect();
         let mut z = Scalar::zero();
 
@@ -431,8 +450,8 @@ impl ThresholdSignature {
     /// A `Result` whose `Ok` value is an empty tuple if the threshold signature
     /// was successfully verified, otherwise a vector of the participant indices
     /// of any misbehaving participants.
-    pub fn verify(&self, group_key: &GroupKey, message: &[u8]) -> Result<(), ()> {
-        let c_prime = compute_challenge(&message, &self.R);
+    pub fn verify(&self, group_key: &GroupKey, message_hash: &[u8; 64]) -> Result<(), ()> {
+        let c_prime = compute_challenge(&message_hash, &self.R);
         let R_prime = (&RISTRETTO_BASEPOINT_TABLE * &self.z) - (group_key.0 * &c_prime);
 
         match self.R.compress() == R_prime.compress() {
@@ -488,8 +507,10 @@ mod test {
 
         let signers = aggregator.get_signers();
 
+        let message_hash = compute_message_hash(b"XXX MAKE A REAL CONTEXT STRING", &message[..]);
+
         // XXX TODO SecretCommitmentShareList doesn't need to store the index
-        let p1_partial = sign(&message[..], &p1_sk, &p1_secret_comshares.commitments[0], signers).unwrap();
+        let p1_partial = sign(&message_hash, &p1_sk, &p1_secret_comshares.commitments[0], signers).unwrap();
 
         aggregator.include_partial_signature(p1_partial);
 
@@ -500,7 +521,7 @@ mod test {
 
         let threshold_signature = signing_result.unwrap();
 
-        let verification_result = threshold_signature.verify(&group_key, &message[..]);
+        let verification_result = threshold_signature.verify(&group_key, &message_hash);
 
         println!("{:?}", verification_result);
 
@@ -546,14 +567,16 @@ mod test {
 
         let signers = aggregator.get_signers();
 
+        let message_hash = compute_message_hash(b"XXX MAKE A REAL CONTEXT STRING", &message[..]);
+
         // XXX TODO SecretCommitmentShareList doesn't need to store the index
-        let p1_partial = sign(&message[..], &p1_sk, &p1_secret_comshares.commitments[0], signers).unwrap();
+        let p1_partial = sign(&message_hash, &p1_sk, &p1_secret_comshares.commitments[0], signers).unwrap();
 
         aggregator.include_partial_signature(p1_partial);
 
         // XXX TODO aggregator should be a new type here to ensure we have proper state.
         let threshold_signature = aggregator.aggregate().unwrap();
-        let verification_result = threshold_signature.verify(&group_key, &message[..]);
+        let verification_result = threshold_signature.verify(&group_key, &message_hash);
 
         assert!(verification_result.is_ok());
     }
@@ -654,10 +677,12 @@ mod test {
 
         let signers = aggregator.get_signers();
 
+        let message_hash = compute_message_hash(b"XXX MAKE A REAL CONTEXT STRING", &message[..]);
+
         // XXX TODO SecretCommitmentShareList doesn't need to store the index
-        let p1_partial = sign(&message[..], &p1_sk, &p1_secret_comshares.commitments[0], signers).unwrap();
-        let p3_partial = sign(&message[..], &p3_sk, &p3_secret_comshares.commitments[0], signers).unwrap();
-        let p4_partial = sign(&message[..], &p4_sk, &p4_secret_comshares.commitments[0], signers).unwrap();
+        let p1_partial = sign(&message_hash, &p1_sk, &p1_secret_comshares.commitments[0], signers).unwrap();
+        let p3_partial = sign(&message_hash, &p3_sk, &p3_secret_comshares.commitments[0], signers).unwrap();
+        let p4_partial = sign(&message_hash, &p4_sk, &p4_secret_comshares.commitments[0], signers).unwrap();
 
         aggregator.include_partial_signature(p1_partial);
         aggregator.include_partial_signature(p3_partial);
@@ -665,7 +690,7 @@ mod test {
 
         // XXX TODO aggregator should be a new type here to ensure we have proper state.
         let threshold_signature = aggregator.aggregate().unwrap();
-        let verification_result = threshold_signature.verify(&group_key, &message[..]);
+        let verification_result = threshold_signature.verify(&group_key, &message_hash);
 
         assert!(verification_result.is_ok());
     }
@@ -741,9 +766,11 @@ mod test {
 
         let signers = aggregator.get_signers();
 
+        let message_hash = compute_message_hash(b"XXX MAKE A REAL CONTEXT STRING", &message[..]);
+
         // XXX TODO SecretCommitmentShareList doesn't need to store the index
-        let p1_partial = sign(&message[..], &p1_sk, &p1_secret_comshares.commitments[0], signers).unwrap();
-        let p2_partial = sign(&message[..], &p2_sk, &p2_secret_comshares.commitments[0], signers).unwrap();
+        let p1_partial = sign(&message_hash, &p1_sk, &p1_secret_comshares.commitments[0], signers).unwrap();
+        let p2_partial = sign(&message_hash, &p2_sk, &p2_secret_comshares.commitments[0], signers).unwrap();
 
         aggregator.include_partial_signature(p1_partial);
         aggregator.include_partial_signature(p2_partial);
@@ -755,7 +782,7 @@ mod test {
 
         let threshold_signature = signing_result.unwrap();
 
-        let verification_result = threshold_signature.verify(&group_key, &message[..]);
+        let verification_result = threshold_signature.verify(&group_key, &message_hash);
 
         println!("{:?}", verification_result);
 

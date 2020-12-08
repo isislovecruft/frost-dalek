@@ -579,7 +579,7 @@ mod test {
     use super::*;
 
     use crate::precomputation::generate_commitment_share_lists;
-    use crate::signature::sign;
+    use crate::signature::{compute_message_hash, sign};
     use crate::signature::SignatureAggregator;
 
     #[test]
@@ -648,9 +648,11 @@ mod test {
 
         let signers = aggregator.get_signers();
 
+        let message_hash = compute_message_hash(b"XXX MAKE A REAL CONTEXT STRING", &message[..]);
+
         // XXX TODO SecretCommitmentShareList doesn't need to store the index
-        let p1_partial = sign(&message[..], &p1_sk, &p1_secret_comshares.commitments[0], signers).unwrap();
-        let p2_partial = sign(&message[..], &p2_sk, &p2_secret_comshares.commitments[0], signers).unwrap();
+        let p1_partial = sign(&message_hash, &p1_sk, &p1_secret_comshares.commitments[0], signers).unwrap();
+        let p2_partial = sign(&message_hash, &p2_sk, &p2_secret_comshares.commitments[0], signers).unwrap();
 
         aggregator.include_partial_signature(p1_partial);
         aggregator.include_partial_signature(p2_partial);
@@ -662,7 +664,7 @@ mod test {
 
         let threshold_signature = signing_result.unwrap();
 
-        let verification_result = threshold_signature.verify(&group_key, &message[..]);
+        let verification_result = threshold_signature.verify(&group_key, &message_hash);
 
         println!("{:?}", verification_result);
 
