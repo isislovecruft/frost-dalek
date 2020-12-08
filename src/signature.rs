@@ -222,8 +222,8 @@ fn compute_challenge(message_hash: &[u8; 64], R: &RistrettoPoint) -> Scalar {
 ///
 /// # Note
 ///
-/// isis stole this from Chelsea and Ian but they stole it from Lagrange, so who
-/// can really say.
+/// isis stole some of this from Chelsea and Ian, but they stole it from
+/// Lagrange, so who can really say.
 fn calculate_lagrange_coefficients(
     participant_index: &u32,
     all_participant_indices: &Vec<u32>,
