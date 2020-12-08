@@ -193,6 +193,38 @@ fn compute_challenge(message: &[u8], R: &RistrettoPoint) -> Scalar {
     Scalar::from_hash(h2)
 }
 
+/// Calculate using Lagrange's method the interpolation of a polynomial.
+///
+/// # Note
+///
+/// isis stole this from Chelsea and Ian but they stole it from Lagrange, so who
+/// can really say.
+fn calculate_lagrange_coefficients(
+    participant_index: &u32,
+    all_participant_indices: &Vec<u32>,
+) -> Result<Scalar, &'static str>
+{
+    let mut num = Scalar::one();
+    let mut den = Scalar::one();
+
+    let mine = Scalar::from(*participant_index);
+
+    for j in all_participant_indices.iter() {
+        if j == participant_index {
+            continue;
+        }
+        let s = Scalar::from(*j);
+
+        num *= s;
+        den *= s - mine; // Check to ensure that one person isn't trying to sign twice.
+    }
+
+    if den == Scalar::zero() {
+        return Err("Duplicate shares provided");
+    }
+    Ok(num * den.invert())
+}
+
 /// Compute an individual signer's [`PartialThresholdSignature`] contribution to
 /// a [`ThresholdSignature`] on a `message`.
 ///
@@ -213,7 +245,7 @@ pub fn sign(
     my_secret_key: &SecretKey,
     my_commitment_share: &CommitmentShare,
     signers: &Vec<Signer>,
-) -> PartialThresholdSignature
+) -> Result<PartialThresholdSignature, &'static str>
 {
     let (binding_factors, Rs) = compute_binding_factors_and_group_commitment(&message, &signers);
     let R = Rs.values().sum();
@@ -222,9 +254,8 @@ pub fn sign(
 
     // XXX [PAPER] Why are we adding yet another context for all the signers
     // here when we already have the context in R and the challenge?
-    //
-    // XXX TODO Calculate the Lagrange interpolation for lambda instead.
-    let lambda: Scalar = signers.iter().fold(0, |acc, x| acc + x.participant_index).into();
+    let all_participant_indices = signers.iter().map(|x| x.participant_index).collect();
+    let lambda: Scalar = calculate_lagrange_coefficients(&my_secret_key.index, &all_participant_indices)?;
     let z = my_commitment_share.hiding.nonce +
         (my_commitment_share.binding.nonce * my_binding_factor) +
         (lambda * my_secret_key.key * challenge);
@@ -236,7 +267,7 @@ pub fn sign(
     //
     // XXX ... I.... don't really love this API?
 
-    PartialThresholdSignature { index: my_secret_key.index, z }
+    Ok(PartialThresholdSignature { index: my_secret_key.index, z })
 }
 
 /// A signature aggregator is an untrusted party who coalesces all of the
@@ -271,6 +302,13 @@ impl SignatureAggregator<'_> {
     }
 
     /// Include a signer in the protocol.
+    ///
+    /// # Warning
+    ///
+    /// If this method is called for a specific participant, then that
+    /// participant MUST provide a partial signature to give to
+    /// [`SignatureAggregator.include_partial_signature`], otherwise the signing
+    /// procedure will fail.
     ///
     /// # Panics
     ///
@@ -314,17 +352,33 @@ impl SignatureAggregator<'_> {
         let mut misbehaving_participants: Vec<u32> = Vec::new();
         
         // XXX TODO Should actually check that the indices match.
-        if self.signers.len() != self.parameters.t as usize {
+        if self.signers.len() < self.parameters.t as usize {
             return Err(misbehaving_participants);
         }
 
         let (binding_factors, Rs) = compute_binding_factors_and_group_commitment(&self.message, &self.signers);
         let R = Rs.values().sum();
         let c = compute_challenge(&self.message, &R);
-        let lambda: Scalar = self.signers.iter().fold(0, |acc, x| acc + x.participant_index).into();
+        let all_participant_indices = self.signers.iter().map(|x| x.participant_index).collect();
         let mut z = Scalar::zero();
 
         for signer in self.signers.iter() {
+            // XXX [DIFFERENT_TO_PAPER] We're not just pulling lambda out of our
+            // ass, instead to get the correct algebraic properties to allow for
+            // partial signature aggregation with t <= #participant <= n, we
+            // have to do Langrangian polynomial interpolation.
+            //
+            // XXX [DIFFERENT_TO_PAPER] Also, we're reporting attempted
+            // duplicate signers from the calulation of the Lagrange
+            // coefficients as being misbehaving users.
+            let lambda = match calculate_lagrange_coefficients(&signer.participant_index, &all_participant_indices) {
+                Ok(x)  => x,
+                Err(_) => {
+                    misbehaving_participants.push(signer.participant_index);
+                    continue;
+                }
+            };
+
             // XXX [DIFFERENT_TO_PAPER] We're reporting missing partial
             //     signatures which could possibly be the fault of the aggregator.
             let partial_sig = match self.partial_signatures.get(&signer.participant_index) {
@@ -433,7 +487,7 @@ mod test {
         let signers = aggregator.get_signers();
 
         // XXX TODO SecretCommitmentShareList doesn't need to store the index
-        let p1_partial = sign(&message[..], &p1_sk, &p1_secret_comshares.commitments[0], signers);
+        let p1_partial = sign(&message[..], &p1_sk, &p1_secret_comshares.commitments[0], signers).unwrap();
 
         aggregator.include_partial_signature(p1_partial);
 
@@ -491,7 +545,7 @@ mod test {
         let signers = aggregator.get_signers();
 
         // XXX TODO SecretCommitmentShareList doesn't need to store the index
-        let p1_partial = sign(&message[..], &p1_sk, &p1_secret_comshares.commitments[0], signers);
+        let p1_partial = sign(&message[..], &p1_sk, &p1_secret_comshares.commitments[0], signers).unwrap();
 
         aggregator.include_partial_signature(p1_partial);
 
@@ -599,9 +653,9 @@ mod test {
         let signers = aggregator.get_signers();
 
         // XXX TODO SecretCommitmentShareList doesn't need to store the index
-        let p1_partial = sign(&message[..], &p1_sk, &p1_secret_comshares.commitments[0], signers);
-        let p3_partial = sign(&message[..], &p3_sk, &p3_secret_comshares.commitments[0], signers);
-        let p4_partial = sign(&message[..], &p4_sk, &p4_secret_comshares.commitments[0], signers);
+        let p1_partial = sign(&message[..], &p1_sk, &p1_secret_comshares.commitments[0], signers).unwrap();
+        let p3_partial = sign(&message[..], &p3_sk, &p3_secret_comshares.commitments[0], signers).unwrap();
+        let p4_partial = sign(&message[..], &p4_sk, &p4_secret_comshares.commitments[0], signers).unwrap();
 
         aggregator.include_partial_signature(p1_partial);
         aggregator.include_partial_signature(p3_partial);
@@ -686,8 +740,8 @@ mod test {
         let signers = aggregator.get_signers();
 
         // XXX TODO SecretCommitmentShareList doesn't need to store the index
-        let p1_partial = sign(&message[..], &p1_sk, &p1_secret_comshares.commitments[0], signers);
-        let p2_partial = sign(&message[..], &p2_sk, &p2_secret_comshares.commitments[0], signers);
+        let p1_partial = sign(&message[..], &p1_sk, &p1_secret_comshares.commitments[0], signers).unwrap();
+        let p2_partial = sign(&message[..], &p2_sk, &p2_secret_comshares.commitments[0], signers).unwrap();
 
         aggregator.include_partial_signature(p1_partial);
         aggregator.include_partial_signature(p2_partial);
