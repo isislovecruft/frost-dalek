@@ -332,8 +332,10 @@ impl SignatureAggregator<'_> {
     ///
     /// A `Vec<Signer>` of the participating signers in this round.
     pub fn get_signers<'sa>(&'sa mut self) -> &'sa Vec<Signer> {
-        self.signers.dedup();
+        // .sort() must be called before .dedup() because the latter only
+        // removes consecutive repeated elements.
         self.signers.sort();
+        self.signers.dedup();
 
         &self.signers
     }
@@ -345,6 +347,8 @@ impl SignatureAggregator<'_> {
 
     /// Aggregate a set of partial signatures
     pub fn aggregate(&mut self) -> Result<ThresholdSignature, Vec<u32>> {
+        // .sort() must be called before .dedup() because the latter only
+        // removes consecutive repeated elements.
         self.signers.sort();
         self.signers.dedup();
 
@@ -757,5 +761,40 @@ mod test {
         println!("{:?}", verification_result);
 
         assert!(verification_result.is_ok());
+    }
+
+    #[test]
+    fn aggregator_get_signers() {
+        let params = Parameters { n: 3, t: 2 };
+        let message = b"This is a test of the tsunami alert system. This is only a test.";
+
+        let (p1_public_comshares, p1_secret_comshares) = generate_commitment_share_lists(&mut OsRng, 1, 1);
+        let (p2_public_comshares, p2_secret_comshares) = generate_commitment_share_lists(&mut OsRng, 2, 1);
+
+        let mut aggregator = SignatureAggregator::new(params, &message[..]);
+
+        let p1_sk = SecretKey{ index: 1, key: Scalar::random(&mut OsRng) };
+        let p2_sk = SecretKey{ index: 2, key: Scalar::random(&mut OsRng) };
+
+        aggregator.include_signer(2, p2_public_comshares.commitments[0], (&p2_sk).into());
+        aggregator.include_signer(1, p1_public_comshares.commitments[0], (&p1_sk).into());
+        aggregator.include_signer(2, p2_public_comshares.commitments[0], (&p2_sk).into());
+
+        let signers = aggregator.get_signers();
+
+        // The signers should be deduplicated.
+        assert!(signers.len() == 2);
+
+        // The indices should match and be in sorted order.
+        assert!(signers[0].participant_index == 1);
+        assert!(signers[1].participant_index == 2);
+
+        // Participant 1 should have the correct precomputed shares.
+        assert!(signers[0].published_commitment_share.0 == p1_public_comshares.commitments[0].0);
+        assert!(signers[0].published_commitment_share.1 == p1_public_comshares.commitments[0].1);
+
+        // Same for participant 2.
+        assert!(signers[1].published_commitment_share.0 == p2_public_comshares.commitments[0].0);
+        assert!(signers[1].published_commitment_share.1 == p2_public_comshares.commitments[0].1);
     }
 }
