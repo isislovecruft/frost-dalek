@@ -293,7 +293,6 @@ impl SignatureAggregator<'_> {
     /// Construct a new signature aggregator from some protocol instantiation
     /// `parameters` and a `message` to be signed.
     pub fn new<'sa>(parameters: Parameters, message: &'sa [u8]) -> SignatureAggregator<'sa> {
-        // XXX Can t here be some t' s.t. t ≤ t' ≤ n from the parameters?
         let signers: Vec<Signer> = Vec::with_capacity(parameters.t as usize);
         let public_keys = IndividualPublicKeys::new();
         let partial_signatures = PartialThresholdSignatures::new();
