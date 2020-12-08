@@ -40,7 +40,6 @@ use crate::precomputation::CommitmentShare;
 //     signer's long-term secret key; it must be prevented at all costs.
 
 /// An individual signer in the threshold signature scheme.
-// XXX need sorting method
 // XXX need a constructor
 #[derive(Debug, Eq)]
 pub struct Signer {
