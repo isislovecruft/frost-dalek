@@ -546,6 +546,46 @@ mod test {
     }
 
     #[test]
+    fn signing_and_verification_1_out_of_1() {
+        let params = Parameters { n: 1, t: 1 };
+
+        let (p1, p1coeffs) = Participant::new(&params, 1);
+
+        let mut p1_other_participants: Vec<Participant> = Vec::with_capacity(0);
+        let p1_state = DistributedKeyGeneration::<RoundOne>::new(&params,
+                                                                 &p1.index,
+                                                                 &p1coeffs,
+                                                                 &mut p1_other_participants).unwrap();
+        let p1_their_secret_shares = p1_state.their_secret_shares().unwrap();
+        let p1_my_secret_shares = Vec::with_capacity(0);
+        let p1_state = p1_state.to_round_two(p1_my_secret_shares).unwrap();
+
+        let (group_key, p1_sk) = p1_state.finish(p1.public_key()).unwrap();
+
+        let message = b"This is a test of the tsunami alert system. This is only a test.";
+        let (p1_public_comshares, p1_secret_comshares) = generate_commitment_share_lists(&mut OsRng, 1, 1);
+
+        let mut aggregator = SignatureAggregator::new(params, &message[..]);
+
+        aggregator.include_signer(1, p1_public_comshares.commitments[0], (&p1_sk).into());
+
+        let signers = aggregator.get_signers();
+
+        let message_hash = compute_message_hash(b"XXX MAKE A REAL CONTEXT STRING", &message[..]);
+
+        // XXX TODO SecretCommitmentShareList doesn't need to store the index
+        let p1_partial = sign(&message_hash, &p1_sk, &p1_secret_comshares.commitments[0], signers).unwrap();
+
+        aggregator.include_partial_signature(p1_partial);
+
+        // XXX TODO aggregator should be a new type here to ensure we have proper state.
+        let threshold_signature = aggregator.aggregate().unwrap();
+        let verification_result = threshold_signature.verify(&group_key, &message_hash);
+
+        assert!(verification_result.is_ok());
+    }
+
+    #[test]
     fn signing_and_verification_1_out_of_2() {
         let params = Parameters { n: 2, t: 1 };
 
