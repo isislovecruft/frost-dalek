@@ -372,7 +372,13 @@ impl SignatureAggregator<'_> {
         self.partial_signatures.insert(&partial_signature.index, partial_signature.z);
     }
 
-    /// Aggregate a set of partial signatures
+    /// Aggregate a set of previously-collected partial signatures.
+    ///
+    /// # Returns
+    ///
+    /// A Result whose Ok() value is a [`ThresholdSignature`], otherwise a
+    /// `Vec<u32>` containing the participant indices of the misbehaving
+    /// signers.
     pub fn aggregate(&mut self) -> Result<ThresholdSignature, Vec<u32>> {
         // .sort() must be called before .dedup() because the latter only
         // removes consecutive repeated elements.
