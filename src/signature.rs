@@ -177,23 +177,34 @@ fn compute_binding_factors_and_group_commitment(
     h.update(b"FROST-SHA512");
     h.update(message_hash);
 
+    // [DIFFERENT_TO_PAPER] I added the set of participants (in the paper
+    // B = <(i, D_{ij}, E_(ij))> i \E S) here to avoid rehashing them over and
+    // over again.
+    for signer in signers.iter() {
+        let hiding = signer.published_commitment_share.0;
+        let binding = signer.published_commitment_share.1;
+
+        h.update(signer.participant_index.to_be_bytes());
+        h.update(hiding.compress().as_bytes());
+        h.update(binding.compress().as_bytes());
+    }
+
     for signer in signers.iter() {
         let hiding = signer.published_commitment_share.0;
         let binding = signer.published_commitment_share.1;
 
         let mut h1 = h.clone();
 
+        // [DIFFERENT_TO_PAPER] I put in the participant index last to finish
+        // their unique calculation of rho.
         h1.update(signer.participant_index.to_be_bytes());
-        h1.update(hiding.compress().as_bytes());
-        h1.update(binding.compress().as_bytes());
 
-        let binding_factor = Scalar::from_hash(h1);
+        let binding_factor = Scalar::from_hash(h1); // This is rho in the paper.
 
         // THIS IS THE MAGIC STUFF ↓↓↓
         Rs.insert(&signer.participant_index, hiding + (binding_factor * binding));
 	    binding_factors.insert(signer.participant_index, binding_factor);
     }
-
     (binding_factors, Rs)
 }
 
