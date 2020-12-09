@@ -86,46 +86,12 @@ impl Participant {
     /// with respect to different polynomials and they will fail to create
     /// threshold signatures which validate.
     pub fn dealer(parameters: &Parameters) -> (Vec<DealtParticipant>, VerifiableSecretSharingCommitment) {
-        let participants: Vec<DealtParticipant> = Vec::with_capacity(parameters.n as usize);
-
-        // STEP 1: Every participant P_i samples t random values (a_{i0}, ..., a_{i(t-1)})
-        //         uniformly in ZZ_q, and uses these values as coefficients to define a
-        //         polynomial f_i(x) = \sum_{j=0}^{t-1} a_{ij} x^{j} of degree t-1 over
-        //         ZZ_q.
-        let t: usize = parameters.t as usize;
         let mut rng: OsRng = OsRng;
-        let mut coefficients: Vec<Scalar> = Vec::with_capacity(t as usize);
-        let mut commitment = VerifiableSecretSharingCommitment(Vec::with_capacity(t as usize));
+        let secret = Scalar::random(&mut rng);
 
-        for _ in 0..t {
-            coefficients.push(Scalar::random(&mut rng));
-        }
-
-        let coefficients = Coefficients(coefficients);
-
-        // Step 3: Every participant P_i computes a public commitment
-        //         C_i = [\phi_{i0}, ..., \phi_{i(t-1)}], where \phi_{ij} = g^{a_{ij}},
-        //         0 ≤ j ≤ t-1.
-        for j in 0..t {
-            commitment.0.push(&coefficients.0[j] * &RISTRETTO_BASEPOINT_TABLE);
-        }
-
-        // Generate secret shares here
-        let group_key = &RISTRETTO_BASEPOINT_TABLE * &coefficients.0[0];
-        let mut participants: Vec<DealtParticipant> = Vec::with_capacity(parameters.n as usize);
-
-        // Only one polynomial because dealer, then secret shards are dependent upon index.
-        for i in 1..parameters.n + 1 {
-            let secret_share = SecretShare::evaluate_polynomial(&i, &coefficients);
-            let public_key = IndividualPublicKey {
-                index: i,
-                share: &RISTRETTO_BASEPOINT_TABLE * &secret_share.polynomial_evaluation,
-            };
-
-            participants.push(DealtParticipant { secret_share, public_key, group_key });
-        }
-        (participants, commitment)
+        generate_shares(parameters, secret, rng)
     }
+
 
     /// Construct a new participant for the distributed key generation protocol.
     ///
@@ -187,6 +153,47 @@ impl Participant {
         // XXX FIXME panics if we don't have the key
         &self.commitments[0]
     }
+}
+
+fn generate_shares(parameters: &Parameters, secret: Scalar, mut rng: OsRng) -> (Vec<DealtParticipant>, VerifiableSecretSharingCommitment) {
+    let mut participants: Vec<DealtParticipant> = Vec::with_capacity(parameters.n as usize);
+
+    // STEP 1: Every participant P_i samples t random values (a_{i0}, ..., a_{i(t-1)})
+    //         uniformly in ZZ_q, and uses these values as coefficients to define a
+    //         polynomial f_i(x) = \sum_{j=0}^{t-1} a_{ij} x^{j} of degree t-1 over
+    //         ZZ_q.
+    let t: usize = parameters.t as usize;
+    let mut coefficients: Vec<Scalar> = Vec::with_capacity(t as usize);
+    let mut commitment = VerifiableSecretSharingCommitment(Vec::with_capacity(t as usize));
+
+    coefficients.push(secret);
+    for _ in 0..t-1 {
+        coefficients.push(Scalar::random(&mut rng));
+    }
+
+    let coefficients = Coefficients(coefficients);
+
+    // Step 3: Every participant P_i computes a public commitment
+    //         C_i = [\phi_{i0}, ..., \phi_{i(t-1)}], where \phi_{ij} = g^{a_{ij}},
+    //         0 ≤ j ≤ t-1.
+    for j in 0..t {
+        commitment.0.push(&coefficients.0[j] * &RISTRETTO_BASEPOINT_TABLE);
+    }
+
+    // Generate secret shares here
+    let group_key = &RISTRETTO_BASEPOINT_TABLE * &coefficients.0[0];
+
+    // Only one polynomial because dealer, then secret shards are dependent upon index.
+    for i in 1..parameters.n + 1 {
+        let secret_share = SecretShare::evaluate_polynomial(&i, &coefficients);
+        let public_key = IndividualPublicKey {
+            index: i,
+            share: &RISTRETTO_BASEPOINT_TABLE * &secret_share.polynomial_evaluation,
+        };
+
+        participants.push(DealtParticipant { secret_share, public_key, group_key });
+    }
+    (participants, commitment)
 }
 
 impl PartialOrd for Participant {
@@ -580,16 +587,29 @@ mod test {
 
     use crate::precomputation::generate_commitment_share_lists;
     use crate::signature::sign;
+    use crate::signature::calculate_lagrange_coefficients;
     use crate::signature::SignatureAggregator;
 
-    #[test]
-    #[ignore]
-    fn verify_share() {
-        let params = Parameters { n: 3, t: 2 };
-        let (p, coeffs) = Participant::new(&params, 0);
-        let secret_share = SecretShare::evaluate_polynomial(&0, &coeffs);
+    /// Reconstruct the secret from enough (at least the threshold) already-verified shares.
+    fn reconstruct_secret(participants: &Vec<&DealtParticipant>) -> Result<Scalar, &'static str> {
+        let numshares = participants.len();
 
-        // assert!(secret_share.verify(XXX need VSS commitment));
+        let mut all_participant_indices = Vec::new();
+        for participant in participants {
+            all_participant_indices.push(participant.public_key.index);
+        }
+
+        let mut secret = Scalar::zero();
+
+        for my_index in &all_participant_indices {
+            let this_participant = participants.iter().find(|x| x.public_key.index == *my_index).unwrap();
+            let my_index = this_participant.public_key.index;
+            let my_coeff = calculate_lagrange_coefficients(&my_index, &all_participant_indices)?;
+
+            secret += my_coeff * this_participant.secret_share.polynomial_evaluation;
+        }
+
+        Ok(secret)
     }
 
     #[test]
@@ -602,15 +622,35 @@ mod test {
     }
 
     #[test]
+    fn verify_secret_sharing_from_dealer() {
+        let params = Parameters { n: 3, t: 2 };
+        let mut rng: OsRng = OsRng;
+        let secret = Scalar::random(&mut rng);
+        let (participants, commitment) = generate_shares(&params, secret, rng);
+
+        let mut subset_participants = Vec::new();
+        for i in 0..params.t{
+            subset_participants.push(&participants[i as usize]);
+        }
+        let supposed_secret = reconstruct_secret(&subset_participants);
+        assert!(secret == supposed_secret.unwrap());
+    }
+
+    #[test]
     fn dkg_with_dealer() {
         let params = Parameters { t: 1, n: 2 };
         let (participants, commitment) = Participant::dealer(&params);
+        let (_, commitment2) = Participant::dealer(&params);
 
         // Verify each of the participants' secret shares.
         for p in participants.iter() {
             let result = p.secret_share.verify(&commitment);
 
             assert!(result.is_ok(), "participant {} failed to receive a valid secret share", p.public_key.index);
+
+            let result = p.secret_share.verify(&commitment2);
+
+            assert!(!result.is_ok(), "Should not validate with invalid commitment");
         }
     }
 
