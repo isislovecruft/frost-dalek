@@ -429,12 +429,10 @@ impl SecretShare {
 
         // Evaluate using Horner's method.
         for (index, coefficient) in coefficients.0.iter().rev().enumerate() {
-            if index == (coefficients.0.len() -1) {
-                // The secret is the constant term in the polynomial
-                sum += coefficient;
-            }
-            else {
-                sum += coefficient;
+            // The secret is the constant term in the polynomial
+            sum += coefficient;
+
+            if index != (coefficients.0.len() - 1) {
                 sum *= term;
             }
         }
@@ -448,9 +446,12 @@ impl SecretShare {
         let mut term: Scalar = self.index.into();
         let mut rhs: RistrettoPoint = RistrettoPoint::identity();
 
-        for commitment in commitment.0.iter().rev() {
-            rhs += commitment;
-            rhs *= term;
+        for (index, com) in commitment.0.iter().rev().enumerate() {
+            rhs += com;
+
+            if index != (commitment.0.len() - 1) {
+                rhs *= term;
+            }
         }
 
         match lhs.compress() == rhs.compress() {
