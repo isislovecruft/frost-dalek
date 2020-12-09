@@ -91,9 +91,9 @@ impl ConstantTimeEq for Commitment {
 #[zeroize(drop)]
 pub struct CommitmentShare {
     /// The hiding commitment.
-    pub(crate) hiding: Commitment,
+    pub(crate) hiding: Commitment, // This is (d_{ij}, D_{ij}) in the paper.
     /// The binding commitment.
-    pub(crate) binding: Commitment,
+    pub(crate) binding: Commitment, // This is (e_{ij}, E_{ij}) in the paper.
 }
 
 /// Test equality in constant-time.
