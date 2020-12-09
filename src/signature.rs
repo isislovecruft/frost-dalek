@@ -160,7 +160,7 @@ pub fn compute_message_hash(context_string: &[u8], message: &[u8]) -> [u8; 64] {
 
 fn compute_binding_factors_and_group_commitment(
     message_hash: &[u8; 64],
-    signers: &Vec<Signer>,
+    signers: &[Signer],
 ) -> (HashMap<u32, Scalar>, SignerRs)
 {
 	let mut binding_factors: HashMap<u32, Scalar> = HashMap::with_capacity(signers.len());
@@ -228,7 +228,7 @@ fn compute_challenge(message_hash: &[u8; 64], R: &RistrettoPoint) -> Scalar {
 /// can really say.
 pub(crate) fn calculate_lagrange_coefficients(
     participant_index: &u32,
-    all_participant_indices: &Vec<u32>,
+    all_participant_indices: &[u32],
 ) -> Result<Scalar, &'static str>
 {
     let mut num = Scalar::one();
@@ -273,14 +273,14 @@ pub fn sign(
     message_hash: &[u8; 64],
     my_secret_key: &SecretKey,
     my_commitment_share: &CommitmentShare,
-    signers: &Vec<Signer>,
+    signers: &[Signer],
 ) -> Result<PartialThresholdSignature, &'static str>
 {
     let (binding_factors, Rs) = compute_binding_factors_and_group_commitment(&message_hash, &signers);
     let R = Rs.values().sum();
     let challenge = compute_challenge(&message_hash, &R);
     let my_binding_factor = binding_factors.get(&my_secret_key.index).unwrap(); // XXX error handling
-    let all_participant_indices = signers.iter().map(|x| x.participant_index).collect();
+    let all_participant_indices: Vec<u32> = signers.iter().map(|x| x.participant_index).collect();
     let lambda: Scalar = calculate_lagrange_coefficients(&my_secret_key.index, &all_participant_indices)?;
     let z = my_commitment_share.hiding.nonce +
         (my_commitment_share.binding.nonce * my_binding_factor) +
@@ -318,7 +318,7 @@ pub struct SignatureAggregator<'sa> {
 impl SignatureAggregator<'_> {
     /// Construct a new signature aggregator from some protocol instantiation
     /// `parameters` and a `message` to be signed.
-    pub fn new<'sa>(parameters: Parameters, message: &'sa [u8]) -> SignatureAggregator<'sa> {
+    pub fn new(parameters: Parameters, message: &'_ [u8]) -> SignatureAggregator<'_> {
         let signers: Vec<Signer> = Vec::with_capacity(parameters.t as usize);
         let public_keys = IndividualPublicKeys::new();
         let partial_signatures = PartialThresholdSignatures::new();
@@ -399,7 +399,7 @@ impl SignatureAggregator<'_> {
         let (_, Rs) = compute_binding_factors_and_group_commitment(&message_hash, &self.signers);
         let R = Rs.values().sum();
         let c = compute_challenge(&message_hash, &R);
-        let all_participant_indices = self.signers.iter().map(|x| x.participant_index).collect();
+        let all_participant_indices: Vec<u32> = self.signers.iter().map(|x| x.participant_index).collect();
         let mut z = Scalar::zero();
 
         for signer in self.signers.iter() {
@@ -437,11 +437,11 @@ impl SignatureAggregator<'_> {
                 }
             };
 
-            let check = &RISTRETTO_BASEPOINT_TABLE * &partial_sig;
+            let check = &RISTRETTO_BASEPOINT_TABLE * partial_sig;
 
             match Rs.get(&signer.participant_index) {
                 Some(R_i) => {
-                    if check == R_i + &(Y_i * (c * lambda)) {
+                    if check == R_i + (Y_i * (c * lambda)) {
                         z += partial_sig;
                     } else {
                         misbehaving_participants.insert(signer.participant_index, "Incorrect partial signature");
@@ -456,7 +456,7 @@ impl SignatureAggregator<'_> {
             }
         }
 
-        match misbehaving_participants.len() > 0 {
+        match !misbehaving_participants.is_empty() {
             true => Err(misbehaving_participants),
             false => Ok(ThresholdSignature {z, R}),
         }
@@ -473,14 +473,11 @@ impl ThresholdSignature {
     /// of any misbehaving participants.
     pub fn verify(&self, group_key: &GroupKey, message_hash: &[u8; 64]) -> Result<(), ()> {
         let c_prime = compute_challenge(&message_hash, &self.R);
-        let R_prime = (&RISTRETTO_BASEPOINT_TABLE * &self.z) - (group_key.0 * &c_prime);
+        let R_prime = (&RISTRETTO_BASEPOINT_TABLE * &self.z) - (group_key.0 * c_prime);
 
         match self.R.compress() == R_prime.compress() {
             true => Ok(()),
-            false => {
-                println!("r       is {:?}\nr_prime is {:?}", self.R.compress(), R_prime.compress());
-                return Err(());
-            },
+            false => Err(()),
         }
     }
 }
@@ -510,8 +507,6 @@ mod test {
                                                                  &mut p1_other_participants).unwrap();
         let p1_my_secret_shares = Vec::new();
         let p1_state = p1_state.to_round_two(p1_my_secret_shares).unwrap();
-
-        // XXX make a method for getting the public key share/commitment
         let result = p1_state.finish(p1.public_key().unwrap());
 
         assert!(result.is_ok());

@@ -156,8 +156,8 @@ pub fn generate_commitment_share_lists(
 
     let mut published: Vec<(RistrettoPoint, RistrettoPoint)> = Vec::with_capacity(number_of_shares);
 
-    for n in 0..number_of_shares {
-        published.push(commitments[n].publish());
+    for commitment in commitments.iter() {
+        published.push(commitment.publish());
     }
 
     (PublicCommitmentShareList { participant_index, commitments: published },
@@ -167,7 +167,7 @@ pub fn generate_commitment_share_lists(
 impl SecretCommitmentShareList {
     /// Drop a used [`CommitmentShare`] from our secret commitment share list
     /// and ensure that it is wiped from memory.
-    pub fn drop_share(&mut self, share: &CommitmentShare) {
+    pub fn drop_share(&mut self, share: CommitmentShare) {
         let mut index = -1;
 
         // This is not constant-time in that the number of commitment shares in
@@ -176,7 +176,7 @@ impl SecretCommitmentShareList {
         // list, but none of this gives any adversary that I can think of any
         // advantage.
         for (i, s) in self.commitments.iter().enumerate() {
-            if s.ct_eq(share).into() {
+            if s.ct_eq(&share).into() {
                 index = i as isize;
             }
         }
@@ -219,7 +219,7 @@ mod test {
 
         let used_share = secret_share_list.commitments[0].clone();
 
-        secret_share_list.drop_share(&used_share);
+        secret_share_list.drop_share(used_share);
 
         assert!(secret_share_list.commitments.len() == 7);
     }

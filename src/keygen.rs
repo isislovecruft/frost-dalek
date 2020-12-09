@@ -155,7 +155,7 @@ impl Participant {
     ///
     /// This is used to pass into the final call to `DistributedKeyGeneration::<RoundTwo>.finish()`.
     pub fn public_key(&self) -> Option<&RistrettoPoint> {
-        if self.commitments.len() > 0 {
+        if !self.commitments.is_empty() {
             return Some(&self.commitments[0]);
         }
         None
@@ -337,7 +337,7 @@ impl DistributedKeyGeneration<RoundOne> {
         }
 
         // [DIFFERENT_TO_PAPER] If any participant was misbehaving, return their indices.
-        if misbehaving_participants.len() > 0 {
+        if !misbehaving_participants.is_empty() {
             return Err(misbehaving_participants);
         }
 
@@ -379,6 +379,7 @@ impl DistributedKeyGeneration<RoundOne> {
     /// from `DistributedKeyGeneration::<RoundOne>.their_secret_shares()` to its
     /// respective other participant, and collected our shares from the other
     /// participants in turn.
+    #[allow(clippy::wrong_self_convention)]
     pub fn to_round_two(
         mut self,
         my_secret_shares: Vec<SecretShare>,
@@ -559,7 +560,7 @@ impl IndividualPublicKey {
     pub fn verify(
         &self,
         parameters: &Parameters,
-        commitments: &Vec<RistrettoPoint>,
+        commitments: &[RistrettoPoint],
     ) -> Result<(), ()>
     {
         let rhs = RistrettoPoint::identity();
@@ -589,7 +590,7 @@ impl From<&SecretKey> for IndividualPublicKey {
 
         IndividualPublicKey {
             index: source.index,
-            share: share,
+            share,
         }
     }
 }
