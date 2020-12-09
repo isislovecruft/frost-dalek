@@ -759,7 +759,7 @@ mod test {
         let coefficients = Coefficients(coeffs);
         let share = SecretShare::evaluate_polynomial(&0, &coefficients);
 
-        assert!(share.polynomial_evaluation == Scalar::zero());
+        assert!(share.polynomial_evaluation == Scalar::one());
 
         let mut commitments = VerifiableSecretSharingCommitment(Vec::new());
 
