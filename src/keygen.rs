@@ -424,13 +424,19 @@ impl SecretShare {
     //
     // XXX [PAPER] [CFRG] The participant index CANNOT be 0, or the secret share ends up being Scalar::zero().
     pub(crate) fn evaluate_polynomial(index: &u32, coefficients: &Coefficients) -> SecretShare {
-        let mut term: Scalar = (*index).into();
+        let term: Scalar = (*index).into();
         let mut sum: Scalar = Scalar::zero();
 
         // Evaluate using Horner's method.
-        for coefficient in coefficients.0.iter().rev() {
-            sum += coefficient;
-            sum *= term;
+        for (index, coefficient) in coefficients.0.iter().rev().enumerate() {
+            if index == (coefficients.0.len() -1) {
+                // The secret is the constant term in the polynomial
+                sum += coefficient;
+            }
+            else {
+                sum += coefficient;
+                sum *= term;
+            }
         }
         SecretShare { index: *index, polynomial_evaluation: sum }
     }
