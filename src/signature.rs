@@ -31,16 +31,10 @@ use crate::keygen::SecretKey;
 use crate::parameters::Parameters;
 use crate::precomputation::CommitmentShare;
 
-// assume central aggregator does coordination
-
-// nonces should be explicitly drop()ed from memory (and probably even zeroed
-// first)
-
 // XXX Nonce reuse is catastrophic and results in obtaining an individual
 //     signer's long-term secret key; it must be prevented at all costs.
 
 /// An individual signer in the threshold signature scheme.
-// XXX need a constructor
 #[derive(Debug, Eq)]
 pub struct Signer {
     /// The participant index of this signer.
@@ -94,7 +88,7 @@ impl $type {
         $type(HashMap::new())
     }
 
-    // XXX [CFRG] Since the sorting order matters for the public API, both it
+    // [CFRG] Since the sorting order matters for the public API, both it
     // and the canonicalisation of the participant indices needs to be
     // specified.
     pub(crate) fn insert(&mut self, index: &u32, point: $item) {
@@ -125,7 +119,8 @@ impl $type {
 }} // END macro_rules! impl_indexed_hashmap
 
 /// A struct for storing signers' R values with the signer's participant index.
-// XXX I hate this so much.
+//
+// I hate this so much.
 //
 // XXX TODO there might be a more efficient way to optimise this data structure
 //     and its algorithms?
@@ -164,12 +159,10 @@ fn compute_binding_factors_and_group_commitment(
 ) -> (HashMap<u32, Scalar>, SignerRs)
 {
 	let mut binding_factors: HashMap<u32, Scalar> = HashMap::with_capacity(signers.len());
-    let mut Rs: SignerRs = SignerRs::new(); // XXX can we optimise size?
+    let mut Rs: SignerRs = SignerRs::new();
 
-    // XXX [CFRG] Should the hash function be hardcoded in the RFC or should
+    // [CFRG] Should the hash function be hardcoded in the RFC or should
     // we instead specify the output/block size?
-    //
-    // XXX [PAPER] Does the proof still work with sponges?
     let mut h = Sha512::new();
 
     // [DIFFERENT_TO_PAPER] I added a context string and reordered to hash
@@ -266,9 +259,9 @@ pub(crate) fn calculate_lagrange_coefficients(
 ///
 /// # Returns
 ///
-/// A [`PartialThresholdSignature`], which should be sent to the Signature
-/// Aggregator.
-// XXX How/when can this method ever fail?
+/// A Result whose Ok value contains a [`PartialThresholdSignature`], which
+/// should be sent to the Signature Aggregator.  Otherwise, its Err value contains
+/// a string describing the error which occurred.
 pub fn sign(
     message_hash: &[u8; 64],
     my_secret_key: &SecretKey,
@@ -286,13 +279,12 @@ pub fn sign(
         (my_commitment_share.binding.nonce * my_binding_factor) +
         (lambda * my_secret_key.key * challenge);
 
-    // XXX [DIFFERENT_TO_PAPER] TODO Need to instead pass in the commitment
+    // [DIFFERENT_TO_PAPER] TODO Need to instead pass in the commitment
     // share list and zero-out the used commitment share, which means the
     // signature aggregator needs to tell us somehow which one they picked from
     // our published list.
     //
-    // XXX ... I.... don't really love this API?
-
+    // I.... don't really love this API?
     Ok(PartialThresholdSignature { index: my_secret_key.index, z })
 }
 
@@ -403,12 +395,12 @@ impl SignatureAggregator<'_> {
         let mut z = Scalar::zero();
 
         for signer in self.signers.iter() {
-            // XXX [DIFFERENT_TO_PAPER] We're not just pulling lambda out of our
+            // [DIFFERENT_TO_PAPER] We're not just pulling lambda out of our
             // ass, instead to get the correct algebraic properties to allow for
             // partial signature aggregation with t <= #participant <= n, we
             // have to do Langrangian polynomial interpolation.
             //
-            // XXX [DIFFERENT_TO_PAPER] Also, we're reporting attempted
+            // [DIFFERENT_TO_PAPER] Also, we're reporting attempted
             // duplicate signers from the calulation of the Lagrange
             // coefficients as being misbehaving users.
             let lambda = match calculate_lagrange_coefficients(&signer.participant_index, &all_participant_indices) {
@@ -419,8 +411,8 @@ impl SignatureAggregator<'_> {
                 }
             };
 
-            // XXX [DIFFERENT_TO_PAPER] We're reporting missing partial
-            //     signatures which could possibly be the fault of the aggregator.
+            // [DIFFERENT_TO_PAPER] We're reporting missing partial signatures
+            // which could possibly be the fault of the aggregator.
             let partial_sig = match self.partial_signatures.get(&signer.participant_index) {
                 Some(z_i) => z_i,
                 None => {
@@ -447,9 +439,9 @@ impl SignatureAggregator<'_> {
                         misbehaving_participants.insert(signer.participant_index, "Incorrect partial signature");
                     }
                 },
-                // XXX [DIFFERENT_TO_PAPER] We're reporting missing signers
-                //     (possibly the fault of the aggregator) as well as
-                //     misbehaved participants.
+                // [DIFFERENT_TO_PAPER] We're reporting missing signers
+                // (possibly the fault of the aggregator) as well as misbehaved
+                //  participants.
                 None => {
                     misbehaving_participants.insert(signer.participant_index, "Missing signer that aggregator expected");
                 },
@@ -711,7 +703,6 @@ mod test {
         let p4_state = p4_state.to_round_two(p4_my_secret_shares).unwrap();
         let p5_state = p5_state.to_round_two(p5_my_secret_shares).unwrap();
 
-        // XXX make a method for getting the public key share/commitment
         let (group_key, p1_sk) = p1_state.finish(p1.public_key().unwrap()).unwrap();
         let (_, _) = p2_state.finish(p2.public_key().unwrap()).unwrap();
         let (_, p3_sk) = p3_state.finish(p3.public_key().unwrap()).unwrap();
@@ -793,7 +784,6 @@ mod test {
             let p2_state = p2_state.to_round_two(p2_my_secret_shares)?;
             let p3_state = p3_state.to_round_two(p3_my_secret_shares)?;
 
-            // XXX make a method for getting the public key share/commitment
             let (p1_group_key, p1_secret_key) = p1_state.finish(p1.public_key().unwrap())?;
             let (p2_group_key, p2_secret_key) = p2_state.finish(p2.public_key().unwrap())?;
             let (p3_group_key, p3_secret_key) = p3_state.finish(p3.public_key().unwrap())?;
