@@ -37,3 +37,11 @@ pub mod nizk;
 // only), which requires std.
 #[cfg(any(test, feature = "std"))]
 pub mod signature;
+
+pub use keygen::DistributedKeyGeneration;
+pub use keygen::Participant;
+pub use parameters::Parameters;
+pub use precomputation::generate_commitment_share_lists;
+pub use signature::compute_message_hash;
+pub use signature::sign;
+pub use signature::SignatureAggregator;
