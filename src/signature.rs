@@ -394,7 +394,7 @@ impl SignatureAggregator<'_> {
 
         // XXX TODO allow application specific context strings.
         let message_hash = compute_message_hash(b"XXX MAKE A REAL CONTEXT STRING", &self.message);
-        let (binding_factors, Rs) = compute_binding_factors_and_group_commitment(&message_hash, &self.signers);
+        let (_, Rs) = compute_binding_factors_and_group_commitment(&message_hash, &self.signers);
         let R = Rs.values().sum();
         let c = compute_challenge(&message_hash, &R);
         let all_participant_indices = self.signers.iter().map(|x| x.participant_index).collect();
