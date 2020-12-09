@@ -12,7 +12,103 @@
 //! # Examples
 //!
 //! ```rust
-//! // XXX DOCDOC
+//! use frost_dalek::DistributedKeyGeneration;
+//! use frost_dalek::Parameters;
+//! use frost_dalek::Participant;
+//!
+//! # fn do_test() -> Result<(), ()> {
+//! // Set up key shares for a threshold signature scheme which needs at least
+//! // 2-out-of-3 signers.
+//! let params = Parameters { t: 2, n: 3 };
+//!
+//! // Alice, Bob, and Carol each generate their secret polynomial coefficients
+//! // and commitments to them, as well as a zero-knowledge proof of a secret key.
+//! let (alice, alice_coeffs) = Participant::new(&params, 1);
+//! let (bob, bob_coeffs) = Participant::new(&params, 2);
+//! let (carol, carol_coeffs) = Participant::new(&params, 3);
+//!
+//! // They send these values to each of the other participants (out of scope
+//! // for this library), or otherwise publish them somewhere.
+//! //
+//! // alice.send_to(bob);
+//! // alice.send_to(carol);
+//! // bob.send_to(alice);
+//! // bob.send_to(carol);
+//! // carol.send_to(alice);
+//! // carol.send_to(bob);
+//! //
+//! // NOTE: They should only send the `alice`, `bob`, and `carol` structs, *not*
+//! //       the `alice_coefficients`, etc.
+//! //
+//! // Bob and Carol verify Alice's zero-knowledge proof by doing:
+//!
+//! alice.proof_of_secret_key.verify(&alice.index, &alice.public_key().unwrap())?;
+//!
+//! // Similarly, Alice and Carol verify Bob's proof:
+//! bob.proof_of_secret_key.verify(&bob.index, &bob.public_key().unwrap())?;
+//!
+//! // And, again, Alice and Bob verify Carol's proof:
+//! carol.proof_of_secret_key.verify(&carol.index, &carol.public_key().unwrap())?;
+//!
+//! // Alice enters round one of the distributed key generation protocol.
+//! let mut alice_other_participants: Vec<Participant> = vec!(bob.clone(), carol.clone());
+//! let alice_state = DistributedKeyGeneration::<_>::new(&params, &alice.index, &alice_coeffs,
+//!                                                      &mut alice_other_participants).or(Err(()))?;
+//!
+//! // Alice then collects the secret shares which they send to the other participants:
+//! let alice_their_secret_shares = alice_state.their_secret_shares()?;
+//! // send_to_bob(alice_their_secret_shares[0]);
+//! // send_to_carol(alice_their_secret_shares[1]);
+//!
+//! // Bob enters round one of the distributed key generation protocol.
+//! let mut bob_other_participants: Vec<Participant> = vec!(alice.clone(), carol.clone());
+//! let bob_state = DistributedKeyGeneration::<_>::new(&params, &bob.index, &bob_coeffs,
+//!                                                    &mut bob_other_participants).or(Err(()))?;
+//!
+//! // Bob then collects the secret shares which they send to the other participants:
+//! let bob_their_secret_shares = bob_state.their_secret_shares()?;
+//! // send_to_alice(bob_their_secret_shares[0]);
+//! // send_to_carol(bob_their_secret_shares[1]);
+//!
+//! // Carol enters round one of the distributed key generation protocol.
+//! let mut carol_other_participants: Vec<Participant> = vec!(alice.clone(), bob.clone());
+//! let carol_state = DistributedKeyGeneration::<_>::new(&params, &carol.index, &carol_coeffs,
+//!                                                      &mut carol_other_participants).or(Err(()))?;
+//!
+//! // Carol then collects the secret shares which they send to the other participants:
+//! let carol_their_secret_shares = carol_state.their_secret_shares()?;
+//! // send_to_alice(carol_their_secret_shares[0]);
+//! // send_to_bob(carol_their_secret_shares[1]);
+//!
+//! // Each participant now has a vector of secret shares given to them by the other participants:
+//! let alice_my_secret_shares = vec!(bob_their_secret_shares[0].clone(),
+//!                                   carol_their_secret_shares[0].clone());
+//! let bob_my_secret_shares = vec!(alice_their_secret_shares[0].clone(),
+//!                                 carol_their_secret_shares[1].clone());
+//! let carol_my_secret_shares = vec!(alice_their_secret_shares[1].clone(),
+//!                                   bob_their_secret_shares[1].clone());
+//!
+//! // The participants then use these secret shares from the other participants to advance to
+//! // round two of the distributed key generation protocol.
+//! let alice_state = alice_state.to_round_two(alice_my_secret_shares)?;
+//! let bob_state = bob_state.to_round_two(bob_my_secret_shares)?;
+//! let carol_state = carol_state.to_round_two(carol_my_secret_shares)?;
+//!
+//! // Each participant can now derive their long-lived secret keys and the group's
+//! // public key.
+//! let (alice_group_key, alice_secret_key) = alice_state.finish(alice.public_key().unwrap())?;
+//! let (bob_group_key, bob_secret_key) = bob_state.finish(bob.public_key().unwrap())?;
+//! let (carol_group_key, carol_secret_key) = carol_state.finish(carol.public_key().unwrap())?;
+//!
+//! // They should all derive the same group public key.
+//! assert!(alice_group_key == bob_group_key);
+//! assert!(carol_group_key == bob_group_key);
+//!
+//! // Alice, Bob, and Carol can now create partial threshold signatures over an agreed upon
+//! // message with their respective secret keys, which they can then give to a
+//! // [`SignatureAggregator`] to create a 2-out-of-3 threshold signature.
+//! # Ok(())}
+//! # fn main() { assert!(do_test().is_ok()); }
 //! ```
 
 #[cfg(feature = "std")]
@@ -596,7 +692,14 @@ impl From<&SecretKey> for IndividualPublicKey {
 }
 
 /// A public key, used to verify a signature made by a threshold of a group of participants.
+#[derive(Debug, Eq)]
 pub struct GroupKey(pub(crate) RistrettoPoint);
+
+impl PartialEq for GroupKey {
+    fn eq(&self, other: &Self) -> bool {
+        self.0.compress() == other.0.compress()
+    }
+}
 
 #[cfg(test)]
 mod test {
