@@ -277,10 +277,7 @@ pub fn sign(
     let (binding_factors, Rs) = compute_binding_factors_and_group_commitment(&message_hash, &signers);
     let R = Rs.values().sum();
     let challenge = compute_challenge(&message_hash, &R);
-    let my_binding_factor = binding_factors[&my_secret_key.index];
-
-    // XXX [PAPER] Why are we adding yet another context for all the signers
-    // here when we already have the context in R and the challenge?
+    let my_binding_factor = binding_factors.get(&my_secret_key.index).unwrap(); // XXX error handling
     let all_participant_indices = signers.iter().map(|x| x.participant_index).collect();
     let lambda: Scalar = calculate_lagrange_coefficients(&my_secret_key.index, &all_participant_indices)?;
     let z = my_commitment_share.hiding.nonce +
