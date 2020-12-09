@@ -198,6 +198,8 @@ fn compute_binding_factors_and_group_commitment(
         // [DIFFERENT_TO_PAPER] I put in the participant index last to finish
         // their unique calculation of rho.
         h1.update(signer.participant_index.to_be_bytes());
+        h1.update(hiding.compress().as_bytes());
+        h1.update(binding.compress().as_bytes());
 
         let binding_factor = Scalar::from_hash(h1); // This is rho in the paper.
 
@@ -222,9 +224,9 @@ fn compute_challenge(message_hash: &[u8; 64], R: &RistrettoPoint) -> Scalar {
 ///
 /// # Note
 ///
-/// isis stole some of this from Chelsea and Ian, but they stole it from
-/// Lagrange, so who can really say.
-fn calculate_lagrange_coefficients(
+/// isis stole this from Chelsea and Ian but they stole it from Lagrange, so who
+/// can really say.
+pub(crate) fn calculate_lagrange_coefficients(
     participant_index: &u32,
     all_participant_indices: &Vec<u32>,
 ) -> Result<Scalar, &'static str>
