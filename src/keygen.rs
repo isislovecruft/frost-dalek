@@ -53,7 +53,13 @@ pub struct Coefficients(pub(crate) Vec<Scalar>);
 #[derive(Debug)]
 pub struct VerifiableSecretSharingCommitment(pub(crate) Vec<RistrettoPoint>);
 
-/// DOCDOC A participant created by a trusted dealer.
+/// A participant created by a trusted dealer.
+///
+/// This can be used to create the participants' keys and secret shares without
+/// having to do secret sharing or zero-knowledge proofs.  It's mostly provided
+/// for testing and debugging purposes, but there is nothing wrong with using it
+/// if you have trust in the dealer to not forge rogue signatures.
+#[derive(Debug)]
 pub struct DealtParticipant {
     pub(crate) secret_share: SecretShare,
     pub(crate) public_key: IndividualPublicKey,
