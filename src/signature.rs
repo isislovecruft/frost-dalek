@@ -175,7 +175,7 @@ fn compute_binding_factors_and_group_commitment(
     // [DIFFERENT_TO_PAPER] I added a context string and reordered to hash
     // constants like the message first.
     h.update(b"FROST-SHA512");
-    h.update(message_hash);
+    h.update(&message_hash[..]);
 
     // [DIFFERENT_TO_PAPER] I added the set of participants (in the paper
     // B = <(i, D_{ij}, E_(ij))> i \E S) here to avoid rehashing them over and
@@ -214,7 +214,7 @@ fn compute_challenge(message_hash: &[u8; 64], R: &RistrettoPoint) -> Scalar {
     let mut h2 = Sha512::new();
 
     h2.update(b"FROST-SHA512");
-    h2.update(message_hash);
+    h2.update(&message_hash[..]);
     h2.update(R.compress().as_bytes());
 
     Scalar::from_hash(h2)
