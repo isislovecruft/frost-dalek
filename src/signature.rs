@@ -374,15 +374,18 @@ impl SignatureAggregator<'_> {
     /// # Returns
     ///
     /// A Result whose Ok() value is a [`ThresholdSignature`], otherwise a
-    /// `Vec<u32>` containing the participant indices of the misbehaving
-    /// signers.
-    pub fn aggregate(&mut self) -> Result<ThresholdSignature, Vec<u32>> {
+    /// `Hashmap<u32, &'static str>` containing the participant indices of the misbehaving
+    /// signers and a description of their misbehaviour.
+    ///
+    /// If the Hashmap is empty, the aggregator did not have \(( t' \)) partial signers
+    /// s.t. \(( t \le t' \le n \)).
+    pub fn aggregate(&mut self) -> Result<ThresholdSignature, HashMap<u32, &'static str>> {
         // .sort() must be called before .dedup() because the latter only
         // removes consecutive repeated elements.
         self.signers.sort();
         self.signers.dedup();
 
-        let mut misbehaving_participants: Vec<u32> = Vec::new();
+        let mut misbehaving_participants: HashMap<u32, &'static str> = HashMap::new();
         
         // XXX TODO Should actually check that the indices match.
         if self.signers.len() < self.parameters.t as usize {
@@ -409,7 +412,7 @@ impl SignatureAggregator<'_> {
             let lambda = match calculate_lagrange_coefficients(&signer.participant_index, &all_participant_indices) {
                 Ok(x)  => x,
                 Err(_) => {
-                    misbehaving_participants.push(signer.participant_index);
+                    misbehaving_participants.insert(signer.participant_index, "Could not calculate lambda");
                     continue;
                 }
             };
@@ -417,35 +420,37 @@ impl SignatureAggregator<'_> {
             // XXX [DIFFERENT_TO_PAPER] We're reporting missing partial
             //     signatures which could possibly be the fault of the aggregator.
             let partial_sig = match self.partial_signatures.get(&signer.participant_index) {
-                Some(x) => x,
+                Some(z_i) => z_i,
                 None => {
-                    misbehaving_participants.push(signer.participant_index);
+                    misbehaving_participants.insert(signer.participant_index, "Missing partial signature");
                     continue;
                 },
             };
-            let check = &RISTRETTO_BASEPOINT_TABLE * &partial_sig;
 
-            // XXX TODO maybe we should be reporting strings so that we know the
-            // reason someone was "misbehaving".
             let Y_i = match self.public_keys.get(&signer.participant_index) {
                 Some(x) => x,
                 None => {
-                    misbehaving_participants.push(signer.participant_index);
+                    misbehaving_participants.insert(signer.participant_index, "Missing public key");
                     continue;
                 }
             };
 
+            let check = &RISTRETTO_BASEPOINT_TABLE * &partial_sig;
+
             match Rs.get(&signer.participant_index) {
                 Some(R_i) => {
-                    match check == R_i + &(Y_i * (c * lambda)) { // XXX lambda why???
-                        true  => z += partial_sig,
-                        false => misbehaving_participants.push(signer.participant_index),
+                    if check == R_i + &(Y_i * (c * lambda)) {
+                        z += partial_sig;
+                    } else {
+                        misbehaving_participants.insert(signer.participant_index, "Incorrect partial signature");
                     }
                 },
                 // XXX [DIFFERENT_TO_PAPER] We're reporting missing signers
                 //     (possibly the fault of the aggregator) as well as
                 //     misbehaved participants.
-                None => misbehaving_participants.push(signer.participant_index),
+                None => {
+                    misbehaving_participants.insert(signer.participant_index, "Missing signer that aggregator expected");
+                },
             }
         }
 
