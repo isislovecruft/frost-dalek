@@ -27,7 +27,6 @@ extern crate std;
 #[cfg(feature = "alloc")]
 extern crate alloc;
 
-pub mod errors;
 pub mod keygen;
 pub mod parameters;
 pub mod precomputation;
