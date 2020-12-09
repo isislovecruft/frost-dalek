@@ -451,7 +451,7 @@ impl SecretShare {
     /// polynomial coefficients attested to by some `commitment`.
     pub(crate) fn verify(&self, commitment: &VerifiableSecretSharingCommitment) -> Result<(), ()> {
         let lhs = &RISTRETTO_BASEPOINT_TABLE * &self.polynomial_evaluation;
-        let mut term: Scalar = self.index.into();
+        let term: Scalar = self.index.into();
         let mut rhs: RistrettoPoint = RistrettoPoint::identity();
 
         for (index, com) in commitment.0.iter().rev().enumerate() {
@@ -530,6 +530,7 @@ impl DistributedKeyGeneration<RoundTwo> {
 ///
 /// Any participant can recalculate the public verification share, which is the
 /// public half of a [`SecretKey`], of any other participant in the protocol.
+#[derive(Debug)]
 pub struct IndividualPublicKey {
     /// The participant index to which this key belongs.
     pub index: u32,
@@ -554,13 +555,14 @@ impl IndividualPublicKey {
     ///
     /// A `Result` with either an empty `Ok` or `Err` value, depending on
     /// whether or not the verification was successful.
+    #[allow(unused)]
     pub fn verify(
         &self,
         parameters: &Parameters,
         commitments: &Vec<RistrettoPoint>,
     ) -> Result<(), ()>
     {
-        let mut rhs = RistrettoPoint::identity();
+        let rhs = RistrettoPoint::identity();
 
         for j in 1..parameters.n {
             for k in 0..parameters.t {
@@ -605,34 +607,16 @@ mod test {
 
     /// Reconstruct the secret from enough (at least the threshold) already-verified shares.
     fn reconstruct_secret(participants: &Vec<&DealtParticipant>) -> Result<Scalar, &'static str> {
-        let numshares = participants.len();
-
-        let mut all_participant_indices = Vec::new();
-        for participant in participants {
-            all_participant_indices.push(participant.public_key.index);
-        }
-
+        let all_participant_indices: Vec<u32> = participants.iter().map(|p| p.public_key.index).collect();
         let mut secret = Scalar::zero();
 
-        for my_index in &all_participant_indices {
-            let this_participant = participants.iter().find(|x| x.public_key.index == *my_index).unwrap();
-            let my_index = this_participant.public_key.index;
-            let my_coeff = calculate_lagrange_coefficients(&my_index, &all_participant_indices)?;
+        for this_participant in participants {
+            let my_coeff = calculate_lagrange_coefficients(&this_participant.public_key.index,
+                                                           &all_participant_indices)?;
 
             secret += my_coeff * this_participant.secret_share.polynomial_evaluation;
         }
-
         Ok(secret)
-    }
-
-    #[test]
-    #[ignore]
-    fn verify_share() {
-        let params = Parameters { n: 3, t: 2 };
-        let (p, coeffs) = Participant::new(&params, 0);
-        let secret_share = SecretShare::evaluate_polynomial(&0, &coeffs);
-
-        // assert!(secret_share.verify(XXX need VSS commitment));
     }
 
     #[test]
@@ -649,7 +633,7 @@ mod test {
         let params = Parameters { n: 3, t: 2 };
         let mut rng: OsRng = OsRng;
         let secret = Scalar::random(&mut rng);
-        let (participants, commitment) = generate_shares(&params, secret, rng);
+        let (participants, _commitment) = generate_shares(&params, secret, rng);
 
         let mut subset_participants = Vec::new();
         for i in 0..params.t{
@@ -791,7 +775,6 @@ mod test {
                                                                  &p1.index,
                                                                  &p1coeffs,
                                                                  &mut p1_other_participants).unwrap();
-        let p1_their_secret_shares = p1_state.their_secret_shares().unwrap();
         let p1_my_secret_shares = Vec::new();
         let p1_state = p1_state.to_round_two(p1_my_secret_shares).unwrap();
         let result = p1_state.finish(p1.public_key().unwrap());
@@ -886,11 +869,11 @@ mod test {
         let p5_state = p5_state.to_round_two(p5_my_secret_shares).unwrap();
 
         // XXX make a method for getting the public key share/commitment
-        let (p1_group_key, p1_secret_key) = p1_state.finish(p1.public_key().unwrap()).unwrap();
-        let (p2_group_key, p2_secret_key) = p2_state.finish(p2.public_key().unwrap()).unwrap();
-        let (p3_group_key, p3_secret_key) = p3_state.finish(p3.public_key().unwrap()).unwrap();
-        let (p4_group_key, p4_secret_key) = p4_state.finish(p4.public_key().unwrap()).unwrap();
-        let (p5_group_key, p5_secret_key) = p5_state.finish(p5.public_key().unwrap()).unwrap();
+        let (p1_group_key, _p1_secret_key) = p1_state.finish(p1.public_key().unwrap()).unwrap();
+        let (p2_group_key, _p2_secret_key) = p2_state.finish(p2.public_key().unwrap()).unwrap();
+        let (p3_group_key, _p3_secret_key) = p3_state.finish(p3.public_key().unwrap()).unwrap();
+        let (p4_group_key, _p4_secret_key) = p4_state.finish(p4.public_key().unwrap()).unwrap();
+        let (p5_group_key, _p5_secret_key) = p5_state.finish(p5.public_key().unwrap()).unwrap();
 
         assert!(p1_group_key.0.compress() == p2_group_key.0.compress());
         assert!(p2_group_key.0.compress() == p3_group_key.0.compress());
@@ -952,9 +935,9 @@ mod test {
             let p3_state = p3_state.to_round_two(p3_my_secret_shares)?;
 
             // XXX make a method for getting the public key share/commitment
-            let (p1_group_key, p1_secret_key) = p1_state.finish(p1.public_key().unwrap())?;
-            let (p2_group_key, p2_secret_key) = p2_state.finish(p2.public_key().unwrap())?;
-            let (p3_group_key, p3_secret_key) = p3_state.finish(p3.public_key().unwrap())?;
+            let (p1_group_key, _p1_secret_key) = p1_state.finish(p1.public_key().unwrap())?;
+            let (p2_group_key, _p2_secret_key) = p2_state.finish(p2.public_key().unwrap())?;
+            let (p3_group_key, _p3_secret_key) = p3_state.finish(p3.public_key().unwrap())?;
 
             assert!(p1_group_key.0.compress() == p2_group_key.0.compress());
             assert!(p2_group_key.0.compress() == p3_group_key.0.compress());

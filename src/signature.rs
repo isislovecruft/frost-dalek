@@ -490,7 +490,7 @@ mod test {
     use super::*;
 
     use crate::keygen::Participant;
-    use crate::keygen::{DistributedKeyGeneration, RoundOne, RoundTwo};
+    use crate::keygen::{DistributedKeyGeneration, RoundOne};
     use crate::precomputation::generate_commitment_share_lists;
 
     use rand::rngs::OsRng;
@@ -508,7 +508,6 @@ mod test {
                                                                  &p1.index,
                                                                  &p1coeffs,
                                                                  &mut p1_other_participants).unwrap();
-        let p1_their_secret_shares = p1_state.their_secret_shares().unwrap();
         let p1_my_secret_shares = Vec::new();
         let p1_state = p1_state.to_round_two(p1_my_secret_shares).unwrap();
 
@@ -560,7 +559,6 @@ mod test {
                                                                  &p1.index,
                                                                  &p1coeffs,
                                                                  &mut p1_other_participants).unwrap();
-        let p1_their_secret_shares = p1_state.their_secret_shares().unwrap();
         let p1_my_secret_shares = Vec::with_capacity(0);
         let p1_state = p1_state.to_round_two(p1_my_secret_shares).unwrap();
 
@@ -617,7 +615,7 @@ mod test {
         let p2_state = p2_state.to_round_two(p2_my_secret_shares).unwrap();
 
         let (group_key, p1_sk) = p1_state.finish(p1.public_key().unwrap()).unwrap();
-        let (_, p2_sk) = p2_state.finish(p2.public_key().unwrap()).unwrap();
+        let (_, _p2_sk) = p2_state.finish(p2.public_key().unwrap()).unwrap();
 
         let message = b"This is a test of the tsunami alert system. This is only a test.";
         let (p1_public_comshares, p1_secret_comshares) = generate_commitment_share_lists(&mut OsRng, 1, 1);
@@ -814,7 +812,7 @@ mod test {
 
         assert!(keygen_protocol.is_ok());
 
-        let (params, p1_sk, p2_sk, p3_sk, group_key) = keygen_protocol.unwrap();
+        let (params, p1_sk, p2_sk, _p3_sk, group_key) = keygen_protocol.unwrap();
 
         let message = b"This is a test of the tsunami alert system. This is only a test.";
         let (p1_public_comshares, p1_secret_comshares) = generate_commitment_share_lists(&mut OsRng, 1, 1);
@@ -855,8 +853,8 @@ mod test {
         let params = Parameters { n: 3, t: 2 };
         let message = b"This is a test of the tsunami alert system. This is only a test.";
 
-        let (p1_public_comshares, p1_secret_comshares) = generate_commitment_share_lists(&mut OsRng, 1, 1);
-        let (p2_public_comshares, p2_secret_comshares) = generate_commitment_share_lists(&mut OsRng, 2, 1);
+        let (p1_public_comshares, _) = generate_commitment_share_lists(&mut OsRng, 1, 1);
+        let (p2_public_comshares, _) = generate_commitment_share_lists(&mut OsRng, 2, 1);
 
         let mut aggregator = SignatureAggregator::new(params, &message[..]);
 

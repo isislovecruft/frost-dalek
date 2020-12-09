@@ -15,12 +15,9 @@ use curve25519_dalek::scalar::Scalar;
 
 use rand::CryptoRng;
 use rand::Rng;
-use rand::rngs::OsRng;
 
 use sha2::Digest;
 use sha2::Sha512;
-
-use crate::keygen::Coefficients;
 
 /// A proof of knowledge of a secret key, created by making a Schnorr signature
 /// with the secret key.

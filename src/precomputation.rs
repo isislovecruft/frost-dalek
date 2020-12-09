@@ -195,12 +195,12 @@ mod test {
 
     #[test]
     fn nonce_pair() {
-        let nonce_pair = NoncePair::new(&mut OsRng);
+        let _nonce_pair = NoncePair::new(&mut OsRng);
     }
 
     #[test]
     fn nonce_pair_into_commitment_share() {
-        let commitment_share: CommitmentShare = NoncePair::new(&mut OsRng).into();
+        let _commitment_share: CommitmentShare = NoncePair::new(&mut OsRng).into();
     }
 
     #[test]
@@ -213,7 +213,7 @@ mod test {
 
     #[test]
     fn drop_used_commitment_shares() {
-        let (public_share_list, mut secret_share_list) = generate_commitment_share_lists(&mut OsRng, 3, 8);
+        let (_public_share_list, mut secret_share_list) = generate_commitment_share_lists(&mut OsRng, 3, 8);
 
         assert!(secret_share_list.commitments.len() == 8);
 
