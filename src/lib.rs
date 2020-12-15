@@ -7,7 +7,7 @@
 // Authors:
 // - isis agora lovecruft <isis@patternsinthevoid.net>
 
-//! A Rust implementation of [FROST](FROST): Flexible Round-Optimised Schnorr Threshold Signatures.
+//! A Rust implementation of [FROST]: Flexible Round-Optimised Schnorr Threshold Signatures.
 //!
 //! [FROST]: https://eprint.iacr.org/2020/852
 

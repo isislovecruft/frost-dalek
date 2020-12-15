@@ -91,9 +91,13 @@ impl ConstantTimeEq for Commitment {
 #[zeroize(drop)]
 pub struct CommitmentShare {
     /// The hiding commitment.
-    pub(crate) hiding: Commitment, // This is (d_{ij}, D_{ij}) in the paper.
+    ///
+    /// This is \\((d\_{ij}, D\_{ij})\\) in the paper.
+    pub(crate) hiding: Commitment,
     /// The binding commitment.
-    pub(crate) binding: Commitment, // This is (e_{ij}, E_{ij}) in the paper.
+    ///
+    /// This is \\((e\_{ij}, E\_{ij})\\) in the paper.
+    pub(crate) binding: Commitment,
 }
 
 /// Test equality in constant-time.
@@ -131,17 +135,17 @@ pub struct PublicCommitmentShareList {
     pub commitments: Vec<(RistrettoPoint, RistrettoPoint)>,
 }
 
-/// Pre-compute a list of [`CommitmentShares`] for single-round threshold signing.
+/// Pre-compute a list of [`CommitmentShare`]s for single-round threshold signing.
 ///
 /// # Inputs
 ///
 /// * `participant_index` is the index of the threshold signing
-///   [`Participant`] who is publishing this share.
+///   participant who is publishing this share.
 /// * `number_of_shares` denotes the number of commitments published at a time.
 ///
 /// # Returns
 ///
-/// A tuple of `(PublicCommitmentShareList, SecretCommitmentShareList)`.
+/// A tuple of ([`PublicCommitmentShareList`], [`SecretCommitmentShareList`]).
 pub fn generate_commitment_share_lists(
     mut csprng: impl CryptoRng + Rng,
     participant_index: u32,

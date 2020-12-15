@@ -9,6 +9,56 @@
 
 //! A variation of Pedersen's distributed key generation (DKG) protocol.
 //!
+//! This implementation uses the [typestate] design pattern (also called session
+//! types) behind the scenes to enforce that more programming errors are discoverable
+//! at compile-time.  Additionally, secrets generated for commitment openings, secret keys,
+//! nonces in zero-knowledge proofs, etc., are zeroed-out in memory when they are dropped
+//! out of scope.
+//!
+//! # Details
+//!
+//! ## Round One
+//!
+//! * Step #1: Every participant \\(P\_i\\) samples \\(t\\) random values \\((a\_{i0}, \\dots, a\_{i(t-1)})\\)
+//!            uniformly in \\(\mathbb{Z}\_q\\), and uses these values as coefficients to define a
+//!            polynomial \\(f\_i\(x\) = \sum\_{j=0}^{t-1} a\_{ij} x^{j}\\) of degree \\( t-1 \\) over
+//!            \\(\mathbb{Z}\_q\\).
+//!
+//! (Yes, I know the steps are out-of-order. These are the step numbers as given in the paper.  I do them
+//! out-of-order because it saves one scalar multiplication.)
+//!
+//! * Step #3: Every participant \\(P\_i\\) computes a public commitment
+//!            \\(C\_i = \[\phi\_{i0}, \\dots, \phi\_{i(t-1)}\]\\), where \\(\phi\_{ij} = g^{a\_{ij}}\\),
+//!            \\(0 \le j \le t-1\\).
+//!
+//! * Step #2: Every \\(P\_i\\) computes a proof of knowledge to the corresponding secret key
+//!            \\(a\_{i0}\\) by calculating a pseudo-Schnorr signature \\(\sigma\_i = \(s, r\)\\).  (In
+//!            the FROST paper: \\(\sigma\_i = \(\mu\_i, c\_i\)\\), but we stick with Schnorr's
+//!            original notation here.)
+//!
+//! * Step #4: Every participant \\(P\_i\\) broadcasts \\(\(C\_i\\), \\(\sigma\_i\)\\) to all other participants.
+//!
+//! * Step #5: Upon receiving \\((C\_l, \sigma\_l)\\) from participants \\(1 \le l \le n\\), \\(l \ne i\\),
+//!            participant \\(P\_i\\) verifies \\(\sigma\_l = (s\_l, r\_l)\\), by checking:
+//!            \\(s\_l \stackrel{?}{=} \mathcal{H}(l, \Phi, \phi\_{l0}, g^{r\_l} \cdot \phi\_{l0}^{-s\_i})\\).
+//!            If any participants' proofs cannot be verified, return their participant indices.
+//!
+//! ## Round Two
+//!
+//! * Step #1: Each \\(P\_i\\) securely sends to each other participant \\(P\_l\\) a secret share
+//!            \\((l, f\_i(l))\\) using their secret polynomial \\(f\_i(l)\\) and keeps \\((i, f\_i(i))\\)
+//!            for themselves.
+//!
+//! * Step #2: Each \\(P\_i\\) verifies their shares by calculating:
+//!            \\(g^{f\_l(i)} \stackrel{?}{=} \prod\_{k=0}^{n-1} \\)\\(\phi\_{lk}^{i^{k} \mod q}\\),
+//!            aborting if the check fails.
+//!
+//! * Step #3: Each \\(P\_i\\) calculates their secret signing key as the product of all the secret
+//!            polynomial evaluations (including their own):
+//!            \\(a\_i = g^{f\_i(i)} \cdot \prod\_{l=0}^{n-1} g^{f\_l(i)}\\), as well as calculating
+//!            the group public key in similar fashion from the commitments from round one:
+//!            \\(A = C\_i \cdot \prod\_{l=0}^{n-1} C_l\\).
+//!
 //! # Examples
 //!
 //! ```rust
@@ -110,6 +160,8 @@
 //! # Ok(())}
 //! # fn main() { assert!(do_test().is_ok()); }
 //! ```
+//!
+//! [typestate]: http://cliffle.com/blog/rust-typestate/
 
 #[cfg(feature = "std")]
 use std::boxed::Box;
@@ -172,7 +224,7 @@ pub struct Participant {
     pub commitments: Vec<RistrettoPoint>,
     /// The zero-knowledge proof of knowledge of the secret key (a.k.a. the
     /// first coefficient in the private polynomial).  It is constructed as a
-    /// Schnorr signature using \(( a_{i0} \)) as the signing key.
+    /// Schnorr signature using \\( a_{i0} \\) as the signing key.
     pub proof_of_secret_key: NizkOfSecretKey,
 }
 
@@ -247,7 +299,7 @@ impl Participant {
         (Participant { index, commitments, proof_of_secret_key: proof }, coefficients)
     }
 
-    /// Retrieve \(( \alpha_{i0} * B \)), where \(( B \)) is the Ristretto basepoint.
+    /// Retrieve \\( \alpha_{i0} * B \\), where \\( B \\) is the Ristretto basepoint.
     ///
     /// This is used to pass into the final call to `DistributedKeyGeneration::<RoundTwo>.finish()`.
     pub fn public_key(&self) -> Option<&RistrettoPoint> {
@@ -414,10 +466,10 @@ impl DistributedKeyGeneration<RoundOne> {
             return Err(misbehaving_participants);
         }
 
-        // Step 5: Upon receiving C_l, \alpha_l from participants 1 ≤ l ≤ n, l ≠ i,
-        //         participant P_i verifies \alpha_l = (s_l, r_l), by checking:
+        // Step 5: Upon receiving C_l, \sigma_l from participants 1 \le l \le n, l \ne i,
+        //         participant P_i verifies \sigma_l = (s_l, r_l), by checking:
         //
-        //         r_l ?= H(l, \Phi, \phi_{l0}, g^{\mu_l} \mdot \phi_{l0}^{-r_i})
+        //         s_l ?= H(l, \Phi, \phi_{l0}, g^{r_l} \mdot \phi_{l0}^{-s_i})
         for p in other_participants.iter() {
             let public_key = match p.commitments.get(0) {
                 Some(key) => key,
@@ -638,9 +690,13 @@ pub struct IndividualPublicKey {
 impl IndividualPublicKey {
     /// Any participant can compute the public verification share of any other participant.
     ///
-    /// This is done by re-computing this [`IndividualPublicKey`] as:
+    /// This is done by re-computing each [`IndividualPublicKey`] as \\(Y\_i\\) s.t.:
     ///
-    /// \(( Y_i = \Prod{j=1}{n} \Prod{k=0}{t-1} \phi_{jk}^{i^{k} \mod q} \))
+    /// \\[
+    /// Y\_i = \prod\_{j=1}^{n} \prod\_{k=0}^{t-1} \phi\_{jk}^{i^{k} \mod q}
+    /// \\]
+    ///
+    /// for each [`Participant`] index \\(i\\).
     ///
     /// # Inputs
     ///
