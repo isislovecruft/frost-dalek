@@ -21,6 +21,18 @@ use sha2::Sha512;
 
 /// A proof of knowledge of a secret key, created by making a Schnorr signature
 /// with the secret key.
+///
+/// This proof is created by making a pseudo-Schnorr signature,
+/// \\( \sigma\_i = (s\_i, r\_i) \\) using \\( a\_{i0} \\) (from
+/// `frost_dalek::keygen::DistributedKeyGeneration::<RoundOne>::compute_share`)
+/// as the secret key, such that \\( k \stackrel{\\$}{\leftarrow} \mathbb{Z}\_q \\),
+/// \\( M\_i = g^k \\), \\( s\_i = \mathcal{H}(i, \phi, g^{a\_{i0}}, M\_i) \\),
+/// \\( r\_i = k + a\_{i0} \cdot s\_i \\).
+///
+/// Verification is done by calculating \\(M'\_i = g^r + A\_i^{-s}\\),
+/// where \\(A\_i = g^{a_i}\\), and using it to compute
+/// \\(s'\_i = \mathcal{H}(i, \phi, A\_i, M'\_i)\\), then finally
+/// \\(s\_i \stackrel{?}{=} s'\_i\\).
 #[derive(Clone, Debug)]
 pub struct NizkOfSecretKey {
     /// The scalar portion of the Schnorr signature encoding the context.
@@ -31,12 +43,6 @@ pub struct NizkOfSecretKey {
 
 impl NizkOfSecretKey {
     /// Prove knowledge of a secret key.
-    ///
-    /// This proof is created by making a Schnorr signature,
-    /// \\( \alpha_i = (s_i, r_i) \\) using \\( a_{i0} \\) (from `DkgRoundOne::compute_share`)
-    /// as the secret key, such that \\( k \gets^{$} \mathbb{Z}_q \\),
-    /// \\( M_i = g^k \\), \\( s_i = H(i, \phi, g^{a_{i0}}, M_i) \\),
-    /// \\( r_i = k + a_{i0} \mdot s_i \\).
     pub fn prove(
         index: &u32,
         secret_key: &Scalar,
