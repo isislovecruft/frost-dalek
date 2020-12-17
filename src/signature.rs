@@ -83,6 +83,32 @@ pub struct ThresholdSignature {
     pub(crate) z: Scalar,
 }
 
+impl ThresholdSignature {
+    /// Serialize this threshold signature to an array of 64 bytes.
+    pub fn to_bytes(&self) -> [u8; 64] {
+        let mut bytes = [0u8; 64];
+
+        bytes[..32].copy_from_slice(&self.R.compress().as_bytes()[..]);
+        bytes[32..].copy_from_slice(&self.z.as_bytes()[..]);
+        bytes
+    }
+
+    /// Attempt to deserialize a threshold signature from an array of 64 bytes.
+    pub fn from_bytes(bytes: [u8; 64]) -> Result<ThresholdSignature, ()> {
+        let mut array = [0u8; 32];
+
+        array.copy_from_slice(&bytes[..32]);
+
+        let R = CompressedRistretto(array).decompress().ok_or(())?;
+
+        array.copy_from_slice(&bytes[32..]);
+
+        let z = Scalar::from_canonical_bytes(array).ok_or(())?;
+
+        Ok(ThresholdSignature { R, z })
+    }
+}
+
 macro_rules! impl_indexed_hashmap {
     (Type = $type:ident, Item = $item:ident) => {
 

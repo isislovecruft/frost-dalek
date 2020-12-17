@@ -13,6 +13,9 @@ sha2 = { version = "*" }
 subtle = { version = "2.3" }
 zeroize = { version = "1", default-features = false, features = ["zeroize_derive"] }
 
+[dev-dependencies]
+ed25519-dalek = { version = "1" }
+
 [features]
 default = ["std", "u64_backend"]
 
