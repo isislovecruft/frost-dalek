@@ -106,7 +106,7 @@ fn signing_and_verification_3_out_of_5() {
     let (p3_public_comshares, p3_secret_comshares) = generate_commitment_share_lists(&mut OsRng, 3, 1);
     let (p4_public_comshares, p4_secret_comshares) = generate_commitment_share_lists(&mut OsRng, 4, 1);
 
-    let mut aggregator = SignatureAggregator::new(params, &message[..]);
+    let mut aggregator = SignatureAggregator::new(params, group_key, &message[..]);
 
     aggregator.include_signer(1, p1_public_comshares.commitments[0], (&p1_sk).into());
     aggregator.include_signer(3, p3_public_comshares.commitments[0], (&p3_sk).into());
@@ -117,9 +117,9 @@ fn signing_and_verification_3_out_of_5() {
     let message_hash = compute_message_hash(b"XXX MAKE A REAL CONTEXT STRING", &message[..]);
 
     // XXX TODO SecretCommitmentShareList doesn't need to store the index
-    let p1_partial = sign(&message_hash, &p1_sk, &p1_secret_comshares.commitments[0], signers).unwrap();
-    let p3_partial = sign(&message_hash, &p3_sk, &p3_secret_comshares.commitments[0], signers).unwrap();
-    let p4_partial = sign(&message_hash, &p4_sk, &p4_secret_comshares.commitments[0], signers).unwrap();
+    let p1_partial = sign(&message_hash, &p1_sk, &group_key, &p1_secret_comshares.commitments[0], signers).unwrap();
+    let p3_partial = sign(&message_hash, &p3_sk, &group_key, &p3_secret_comshares.commitments[0], signers).unwrap();
+    let p4_partial = sign(&message_hash, &p4_sk, &group_key, &p4_secret_comshares.commitments[0], signers).unwrap();
 
     aggregator.include_partial_signature(p1_partial);
     aggregator.include_partial_signature(p3_partial);

@@ -28,7 +28,7 @@ use subtle::ConstantTimeEq;
 
 use zeroize::Zeroize;
 
-#[derive(Zeroize)]
+#[derive(Debug, Zeroize)]
 #[zeroize(drop)]
 pub(crate) struct NoncePair(pub(crate) Scalar, pub(crate) Scalar);
 
@@ -116,6 +116,7 @@ impl CommitmentShare {
 
 /// A secret commitment share list, containing the revealed nonces for the
 /// hiding and binding commitments.
+#[derive(Debug)]
 pub struct SecretCommitmentShareList {
     /// The participant's index.
     pub participant_index: u32,
@@ -128,6 +129,7 @@ pub struct SecretCommitmentShareList {
 ///
 /// This should be published somewhere before the signing protocol takes place
 /// for the other signing participants to obtain.
+#[derive(Debug)]
 pub struct PublicCommitmentShareList {
     /// The participant's index.
     pub participant_index: u32,

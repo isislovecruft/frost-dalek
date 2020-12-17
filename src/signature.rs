@@ -19,6 +19,7 @@ use std::cmp::Ordering;
 use std::vec::Vec;
 
 use curve25519_dalek::constants::RISTRETTO_BASEPOINT_TABLE;
+use curve25519_dalek::ristretto::CompressedRistretto;
 use curve25519_dalek::ristretto::RistrettoPoint;
 use curve25519_dalek::scalar::Scalar;
 
@@ -69,15 +70,17 @@ impl PartialEq for Signer {
 
 /// A partially-constructed threshold signature, made by each participant in the
 /// signing protocol during the first phase of a signature creation.
+#[derive(Debug)]
 pub struct PartialThresholdSignature {
     pub(crate) index: u32,
     pub(crate) z: Scalar,
 }
 
 /// A complete, aggregated threshold signature.
+#[derive(Debug)]
 pub struct ThresholdSignature {
-    pub(crate) z: Scalar,
     pub(crate) R: RistrettoPoint,
+    pub(crate) z: Scalar,
 }
 
 macro_rules! impl_indexed_hashmap {
@@ -203,12 +206,15 @@ fn compute_binding_factors_and_group_commitment(
     (binding_factors, Rs)
 }
 
-fn compute_challenge(message_hash: &[u8; 64], R: &RistrettoPoint) -> Scalar {
+fn compute_challenge(message_hash: &[u8; 64], group_key: &GroupKey, R: &RistrettoPoint) -> Scalar {
     let mut h2 = Sha512::new();
 
-    h2.update(b"FROST-SHA512");
-    h2.update(&message_hash[..]);
+    // XXX [PAPER] Decide if we want a context string for the challenge.  This
+    // would break compatibility with standard ed25519 libraries for verification.
+    //h2.update(b"FROST-SHA512");
     h2.update(R.compress().as_bytes());
+    h2.update(group_key.to_bytes());
+    h2.update(&message_hash[..]);
 
     Scalar::from_hash(h2)
 }
@@ -254,6 +260,7 @@ pub(crate) fn calculate_lagrange_coefficients(
 ///   the `Sha512` digest of the message, optionally along with some application-specific
 ///   context string.
 /// * This signer's [`SecretKey`],
+/// * The public [`GroupKey`] for this group of signing participants,
 /// * This signer's [`CommitmentShare`] being used in this instantiation, and
 /// * The list of all the currently participating [`Signer`]s.
 ///
@@ -265,13 +272,14 @@ pub(crate) fn calculate_lagrange_coefficients(
 pub fn sign(
     message_hash: &[u8; 64],
     my_secret_key: &SecretKey,
+    group_key: &GroupKey,
     my_commitment_share: &CommitmentShare,
     signers: &[Signer],
 ) -> Result<PartialThresholdSignature, &'static str>
 {
     let (binding_factors, Rs) = compute_binding_factors_and_group_commitment(&message_hash, &signers);
-    let R = Rs.values().sum();
-    let challenge = compute_challenge(&message_hash, &R);
+    let R: RistrettoPoint = Rs.values().sum();
+    let challenge = compute_challenge(&message_hash, &group_key, &R);
     let my_binding_factor = binding_factors.get(&my_secret_key.index).unwrap(); // XXX error handling
     let all_participant_indices: Vec<u32> = signers.iter().map(|x| x.participant_index).collect();
     let lambda: Scalar = calculate_lagrange_coefficients(&my_secret_key.index, &all_participant_indices)?;
@@ -305,17 +313,19 @@ pub struct SignatureAggregator<'sa> {
     /// The partial signatures from individual participants which have been
     /// collected thus far.
     pub(crate) partial_signatures: PartialThresholdSignatures,
+    /// The group public key for all the participants.
+    pub(crate) group_key: GroupKey,
 }
 
 impl SignatureAggregator<'_> {
     /// Construct a new signature aggregator from some protocol instantiation
     /// `parameters` and a `message` to be signed.
-    pub fn new(parameters: Parameters, message: &'_ [u8]) -> SignatureAggregator<'_> {
+    pub fn new(parameters: Parameters, group_key: GroupKey, message: &'_ [u8]) -> SignatureAggregator<'_> {
         let signers: Vec<Signer> = Vec::with_capacity(parameters.t as usize);
         let public_keys = IndividualPublicKeys::new();
         let partial_signatures = PartialThresholdSignatures::new();
 
-        SignatureAggregator { parameters, signers, public_keys, message, partial_signatures }
+        SignatureAggregator { parameters, signers, public_keys, message, partial_signatures, group_key }
     }
 
     /// Include a signer in the protocol.
@@ -389,8 +399,8 @@ impl SignatureAggregator<'_> {
         // XXX TODO allow application specific context strings.
         let message_hash = compute_message_hash(b"XXX MAKE A REAL CONTEXT STRING", &self.message);
         let (_, Rs) = compute_binding_factors_and_group_commitment(&message_hash, &self.signers);
-        let R = Rs.values().sum();
-        let c = compute_challenge(&message_hash, &R);
+        let R: RistrettoPoint = Rs.values().sum();
+        let c = compute_challenge(&message_hash, &self.group_key, &R);
         let all_participant_indices: Vec<u32> = self.signers.iter().map(|x| x.participant_index).collect();
         let mut z = Scalar::zero();
 
@@ -464,7 +474,7 @@ impl ThresholdSignature {
     /// was successfully verified, otherwise a vector of the participant indices
     /// of any misbehaving participants.
     pub fn verify(&self, group_key: &GroupKey, message_hash: &[u8; 64]) -> Result<(), ()> {
-        let c_prime = compute_challenge(&message_hash, &self.R);
+        let c_prime = compute_challenge(&message_hash, &group_key, &self.R);
         let R_prime = (&RISTRETTO_BASEPOINT_TABLE * &self.z) - (group_key.0 * c_prime);
 
         match self.R.compress() == R_prime.compress() {
@@ -481,6 +491,8 @@ mod test {
     use crate::keygen::Participant;
     use crate::keygen::{DistributedKeyGeneration, RoundOne};
     use crate::precomputation::generate_commitment_share_lists;
+
+    use curve25519_dalek::traits::Identity;
 
     use rand::rngs::OsRng;
 
@@ -508,7 +520,7 @@ mod test {
         let message = b"This is a test of the tsunami alert system. This is only a test.";
         let (p1_public_comshares, p1_secret_comshares) = generate_commitment_share_lists(&mut OsRng, 1, 1);
 
-        let mut aggregator = SignatureAggregator::new(params, &message[..]);
+        let mut aggregator = SignatureAggregator::new(params, group_key, &message[..]);
 
         aggregator.include_signer(1, p1_public_comshares.commitments[0], (&p1_sk).into());
 
@@ -517,7 +529,7 @@ mod test {
         let message_hash = compute_message_hash(b"XXX MAKE A REAL CONTEXT STRING", &message[..]);
 
         // XXX TODO SecretCommitmentShareList doesn't need to store the index
-        let p1_partial = sign(&message_hash, &p1_sk, &p1_secret_comshares.commitments[0], signers).unwrap();
+        let p1_partial = sign(&message_hash, &p1_sk, &group_key, &p1_secret_comshares.commitments[0], signers).unwrap();
 
         aggregator.include_partial_signature(p1_partial);
 
@@ -554,7 +566,7 @@ mod test {
         let message = b"This is a test of the tsunami alert system. This is only a test.";
         let (p1_public_comshares, p1_secret_comshares) = generate_commitment_share_lists(&mut OsRng, 1, 1);
 
-        let mut aggregator = SignatureAggregator::new(params, &message[..]);
+        let mut aggregator = SignatureAggregator::new(params, group_key, &message[..]);
 
         aggregator.include_signer(1, p1_public_comshares.commitments[0], (&p1_sk).into());
 
@@ -563,7 +575,7 @@ mod test {
         let message_hash = compute_message_hash(b"XXX MAKE A REAL CONTEXT STRING", &message[..]);
 
         // XXX TODO SecretCommitmentShareList doesn't need to store the index
-        let p1_partial = sign(&message_hash, &p1_sk, &p1_secret_comshares.commitments[0], signers).unwrap();
+        let p1_partial = sign(&message_hash, &p1_sk, &group_key, &p1_secret_comshares.commitments[0], signers).unwrap();
 
         aggregator.include_partial_signature(p1_partial);
 
@@ -607,7 +619,7 @@ mod test {
         let message = b"This is a test of the tsunami alert system. This is only a test.";
         let (p1_public_comshares, p1_secret_comshares) = generate_commitment_share_lists(&mut OsRng, 1, 1);
 
-        let mut aggregator = SignatureAggregator::new(params, &message[..]);
+        let mut aggregator = SignatureAggregator::new(params, group_key, &message[..]);
 
         aggregator.include_signer(1, p1_public_comshares.commitments[0], (&p1_sk).into());
 
@@ -616,7 +628,7 @@ mod test {
         let message_hash = compute_message_hash(b"XXX MAKE A REAL CONTEXT STRING", &message[..]);
 
         // XXX TODO SecretCommitmentShareList doesn't need to store the index
-        let p1_partial = sign(&message_hash, &p1_sk, &p1_secret_comshares.commitments[0], signers).unwrap();
+        let p1_partial = sign(&message_hash, &p1_sk, &group_key, &p1_secret_comshares.commitments[0], signers).unwrap();
 
         aggregator.include_partial_signature(p1_partial);
 
@@ -714,7 +726,7 @@ mod test {
         let (p3_public_comshares, p3_secret_comshares) = generate_commitment_share_lists(&mut OsRng, 3, 1);
         let (p4_public_comshares, p4_secret_comshares) = generate_commitment_share_lists(&mut OsRng, 4, 1);
 
-        let mut aggregator = SignatureAggregator::new(params, &message[..]);
+        let mut aggregator = SignatureAggregator::new(params, group_key, &message[..]);
 
         aggregator.include_signer(1, p1_public_comshares.commitments[0], (&p1_sk).into());
         aggregator.include_signer(3, p3_public_comshares.commitments[0], (&p3_sk).into());
@@ -725,9 +737,9 @@ mod test {
         let message_hash = compute_message_hash(b"XXX MAKE A REAL CONTEXT STRING", &message[..]);
 
         // XXX TODO SecretCommitmentShareList doesn't need to store the index
-        let p1_partial = sign(&message_hash, &p1_sk, &p1_secret_comshares.commitments[0], signers).unwrap();
-        let p3_partial = sign(&message_hash, &p3_sk, &p3_secret_comshares.commitments[0], signers).unwrap();
-        let p4_partial = sign(&message_hash, &p4_sk, &p4_secret_comshares.commitments[0], signers).unwrap();
+        let p1_partial = sign(&message_hash, &p1_sk, &group_key, &p1_secret_comshares.commitments[0], signers).unwrap();
+        let p3_partial = sign(&message_hash, &p3_sk, &group_key, &p3_secret_comshares.commitments[0], signers).unwrap();
+        let p4_partial = sign(&message_hash, &p4_sk, &group_key, &p4_secret_comshares.commitments[0], signers).unwrap();
 
         aggregator.include_partial_signature(p1_partial);
         aggregator.include_partial_signature(p3_partial);
@@ -803,7 +815,7 @@ mod test {
         let (p1_public_comshares, p1_secret_comshares) = generate_commitment_share_lists(&mut OsRng, 1, 1);
         let (p2_public_comshares, p2_secret_comshares) = generate_commitment_share_lists(&mut OsRng, 2, 1);
 
-        let mut aggregator = SignatureAggregator::new(params, &message[..]);
+        let mut aggregator = SignatureAggregator::new(params, group_key.clone(), &message[..]);
 
         aggregator.include_signer(1, p1_public_comshares.commitments[0], (&p1_sk).into());
         aggregator.include_signer(2, p2_public_comshares.commitments[0], (&p2_sk).into());
@@ -813,8 +825,8 @@ mod test {
         let message_hash = compute_message_hash(b"XXX MAKE A REAL CONTEXT STRING", &message[..]);
 
         // XXX TODO SecretCommitmentShareList doesn't need to store the index
-        let p1_partial = sign(&message_hash, &p1_sk, &p1_secret_comshares.commitments[0], signers).unwrap();
-        let p2_partial = sign(&message_hash, &p2_sk, &p2_secret_comshares.commitments[0], signers).unwrap();
+        let p1_partial = sign(&message_hash, &p1_sk, &group_key, &p1_secret_comshares.commitments[0], signers).unwrap();
+        let p2_partial = sign(&message_hash, &p2_sk, &group_key, &p2_secret_comshares.commitments[0], signers).unwrap();
 
         aggregator.include_partial_signature(p1_partial);
         aggregator.include_partial_signature(p2_partial);
@@ -841,7 +853,7 @@ mod test {
         let (p1_public_comshares, _) = generate_commitment_share_lists(&mut OsRng, 1, 1);
         let (p2_public_comshares, _) = generate_commitment_share_lists(&mut OsRng, 2, 1);
 
-        let mut aggregator = SignatureAggregator::new(params, &message[..]);
+        let mut aggregator = SignatureAggregator::new(params, GroupKey(RistrettoPoint::identity()), &message[..]);
 
         let p1_sk = SecretKey{ index: 1, key: Scalar::random(&mut OsRng) };
         let p2_sk = SecretKey{ index: 2, key: Scalar::random(&mut OsRng) };

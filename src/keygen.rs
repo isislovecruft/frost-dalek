@@ -179,6 +179,7 @@ use alloc::boxed::Box;
 use alloc::vec::Vec;
 
 use curve25519_dalek::constants::RISTRETTO_BASEPOINT_TABLE;
+use curve25519_dalek::ristretto::CompressedRistretto;
 use curve25519_dalek::ristretto::RistrettoPoint;
 use curve25519_dalek::scalar::Scalar;
 use curve25519_dalek::traits::Identity;
@@ -727,7 +728,7 @@ impl IndividualPublicKey {
 }
 
 /// A secret key, used by one participant in a threshold signature scheme, to sign a message.
-#[derive(Zeroize)]
+#[derive(Debug, Zeroize)]
 #[zeroize(drop)]
 pub struct SecretKey {
     /// The participant index to which this key belongs.
@@ -748,12 +749,26 @@ impl From<&SecretKey> for IndividualPublicKey {
 }
 
 /// A public key, used to verify a signature made by a threshold of a group of participants.
-#[derive(Debug, Eq)]
+#[derive(Clone, Copy, Debug, Eq)]
 pub struct GroupKey(pub(crate) RistrettoPoint);
 
 impl PartialEq for GroupKey {
     fn eq(&self, other: &Self) -> bool {
         self.0.compress() == other.0.compress()
+    }
+}
+
+impl GroupKey {
+    /// Serialise this group public key to an array of bytes.
+    pub fn to_bytes(&self) -> [u8; 32] {
+        self.0.compress().to_bytes()
+    }
+
+    /// Deserialise this group public key from an array of bytes.
+    pub fn from_bytes(bytes: [u8; 32]) -> Result<GroupKey, ()> {
+        let point = CompressedRistretto(bytes).decompress().ok_or(())?;
+
+        Ok(GroupKey(point))
     }
 }
 
@@ -848,7 +863,7 @@ mod test {
 
         let group_key = GroupKey(participants[0].group_key);
 
-        let mut aggregator = SignatureAggregator::new(params, &message[..]);
+        let mut aggregator = SignatureAggregator::new(params, group_key, &message[..]);
 
         aggregator.include_signer(1, p1_public_comshares.commitments[0], (&p1_sk).into());
         aggregator.include_signer(2, p2_public_comshares.commitments[0], (&p2_sk).into());
@@ -858,8 +873,8 @@ mod test {
         let message_hash = compute_message_hash(b"XXX MAKE A REAL CONTEXT STRING", &message[..]);
 
         // XXX TODO SecretCommitmentShareList doesn't need to store the index
-        let p1_partial = sign(&message_hash, &p1_sk, &p1_secret_comshares.commitments[0], signers).unwrap();
-        let p2_partial = sign(&message_hash, &p2_sk, &p2_secret_comshares.commitments[0], signers).unwrap();
+        let p1_partial = sign(&message_hash, &p1_sk, &group_key, &p1_secret_comshares.commitments[0], signers).unwrap();
+        let p2_partial = sign(&message_hash, &p2_sk, &group_key, &p2_secret_comshares.commitments[0], signers).unwrap();
 
         aggregator.include_partial_signature(p1_partial);
         aggregator.include_partial_signature(p2_partial);
