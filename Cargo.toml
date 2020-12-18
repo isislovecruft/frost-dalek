@@ -14,7 +14,12 @@ subtle = { version = "2.3" }
 zeroize = { version = "1", default-features = false, features = ["zeroize_derive"] }
 
 [dev-dependencies]
+criterion = { version = "0.3" }
 ed25519-dalek = { version = "1" }
+
+[[bench]]
+name = "dalek_benchmarks"
+harness = false
 
 [features]
 default = ["std", "u64_backend"]

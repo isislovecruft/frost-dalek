@@ -199,7 +199,7 @@ pub struct Coefficients(pub(crate) Vec<Scalar>);
 
 /// A commitment to the dealer's secret polynomial coefficients for Feldman's
 /// verifiable secret sharing scheme.
-#[derive(Debug)]
+#[derive(Clone, Debug)]
 pub struct VerifiableSecretSharingCommitment(pub(crate) Vec<RistrettoPoint>);
 
 /// A participant created by a trusted dealer.
@@ -208,7 +208,7 @@ pub struct VerifiableSecretSharingCommitment(pub(crate) Vec<RistrettoPoint>);
 /// having to do secret sharing or zero-knowledge proofs.  It's mostly provided
 /// for testing and debugging purposes, but there is nothing wrong with using it
 /// if you have trust in the dealer to not forge rogue signatures.
-#[derive(Debug)]
+#[derive(Clone, Debug)]
 pub struct DealtParticipant {
     pub(crate) secret_share: SecretShare,
     pub(crate) public_key: IndividualPublicKey,
@@ -379,14 +379,14 @@ mod private {
 
 /// State machine structures for holding intermediate values during a
 /// distributed key generation protocol run, to prevent misuse.
-#[derive(Debug)]
+#[derive(Clone, Debug)]
 pub struct DistributedKeyGeneration<S: DkgState> {
     state: Box<ActualState>,
     data: S,
 }
 
 /// Shared state which occurs across all rounds of a threshold signing protocol run.
-#[derive(Debug)]
+#[derive(Clone, Debug)]
 struct ActualState {
     /// The parameters for this instantiation of a threshold signature.
     parameters: Parameters,
@@ -436,7 +436,7 @@ impl Round2 for RoundTwo {}
 /// commitments and a zero-knowledge proof of a secret key to every other
 /// participant in the protocol.  During round one, each participant checks the
 /// zero-knowledge proofs of secret keys of all other participants.
-#[derive(Debug)]
+#[derive(Clone, Debug)]
 pub struct RoundOne {}
 
 impl DistributedKeyGeneration<RoundOne> {
@@ -621,7 +621,7 @@ impl SecretShare {
 
 /// During round two each participant verifies their secret shares they received
 /// from each other participant.
-#[derive(Debug)]
+#[derive(Clone, Debug)]
 pub struct RoundTwo {}
 
 impl DistributedKeyGeneration<RoundTwo> {
@@ -631,7 +631,7 @@ impl DistributedKeyGeneration<RoundTwo> {
     /// # Example
     ///
     /// ```ignore
-    /// let (group_key, secret_key) = state.finish(participant.commitments.get(0)?)?;
+    /// let (group_key, secret_key) = state.finish(participant.public_key()?)?;
     /// ```
     pub fn finish(mut self, my_commitment: &RistrettoPoint) -> Result<(GroupKey, SecretKey), ()> {
         let secret_key = self.calculate_signing_key()?;
@@ -650,7 +650,6 @@ impl DistributedKeyGeneration<RoundTwo> {
         let my_secret_shares = self.state.my_secret_shares.as_ref().ok_or(())?;
         let mut key = my_secret_shares.iter().map(|x| x.polynomial_evaluation).sum();
 
-        // XXX i think we're supposed to include the self-generated share?
         key += self.state.my_secret_share.polynomial_evaluation;
 
         Ok(SecretKey { index: self.state.my_secret_share.index, key })
@@ -680,7 +679,7 @@ impl DistributedKeyGeneration<RoundTwo> {
 ///
 /// Any participant can recalculate the public verification share, which is the
 /// public half of a [`SecretKey`], of any other participant in the protocol.
-#[derive(Debug)]
+#[derive(Clone, Debug)]
 pub struct IndividualPublicKey {
     /// The participant index to which this key belongs.
     pub index: u32,
