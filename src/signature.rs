@@ -177,7 +177,7 @@ pub(crate) struct IndividualPublicKeys(pub(crate) HashMap<[u8; 4], RistrettoPoin
 
 impl_indexed_hashmap!(Type = IndividualPublicKeys, Item = RistrettoPoint);
 
-/// Compute a Sha-512 hash of a message.
+/// Compute a Sha-512 hash of a `context_string` and a `message`.
 pub fn compute_message_hash(context_string: &[u8], message: &[u8]) -> [u8; 64] {
     let mut h = Sha512::new();
 
