@@ -33,9 +33,10 @@ use sha2::Sha512;
 
 use crate::keygen::GroupKey;
 use crate::keygen::IndividualPublicKey;
-use crate::keygen::SecretKey;
 use crate::parameters::Parameters;
 use crate::precomputation::CommitmentShare;
+
+pub use crate::keygen::SecretKey;
 
 // XXX Nonce reuse is catastrophic and results in obtaining an individual
 //     signer's long-term secret key; it must be prevented at all costs.
@@ -285,51 +286,53 @@ pub(crate) fn calculate_lagrange_coefficients(
     Ok(num * den.invert())
 }
 
-// XXX TODO This should be a method on SecretKey
+impl SecretKey {
+    /// Compute an individual signer's [`PartialThresholdSignature`] contribution to
+    /// a [`ThresholdSignature`] on a `message`.
+    ///
+    /// # Inputs
+    ///
+    /// * The `message_hash` to be signed by every individual signer, this should be
+    ///   the `Sha512` digest of the message, optionally along with some application-specific
+    ///   context string, and can be calculated with the helper function
+    ///   [`compute_message_hash`].
+    /// * The public [`GroupKey`] for this group of signing participants,
+    /// * This signer's [`CommitmentShare`] being used in this instantiation, and
+    /// * The list of all the currently participating [`Signer`]s.
+    ///
+    /// # Returns
+    ///
+    /// A Result whose `Ok` value contains a [`PartialThresholdSignature`], which
+    /// should be sent to the [`SignatureAggregator`].  Otherwise, its `Err` value contains
+    /// a string describing the error which occurred.
+    pub fn sign(
+        &self,
+        message_hash: &[u8; 64],
+        group_key: &GroupKey,
+        // XXX [PAPER] I don't know that we can guarantee simultaneous runs of the protocol
+        // with these nonces being potentially reused?
+        my_commitment_share: &CommitmentShare,
+        signers: &[Signer],
+    ) -> Result<PartialThresholdSignature, &'static str>
+    {
+        let (binding_factors, Rs) = compute_binding_factors_and_group_commitment(&message_hash, &signers);
+        let R: RistrettoPoint = Rs.values().sum();
+        let challenge = compute_challenge(&message_hash, &group_key, &R);
+        let my_binding_factor = binding_factors.get(&self.index).unwrap(); // XXX error handling
+        let all_participant_indices: Vec<u32> = signers.iter().map(|x| x.participant_index).collect();
+        let lambda: Scalar = calculate_lagrange_coefficients(&self.index, &all_participant_indices)?;
+        let z = my_commitment_share.hiding.nonce +
+            (my_commitment_share.binding.nonce * my_binding_factor) +
+            (lambda * self.key * challenge);
 
-/// Compute an individual signer's [`PartialThresholdSignature`] contribution to
-/// a [`ThresholdSignature`] on a `message`.
-///
-/// # Inputs
-///
-/// * The `message_hash` to be signed by every individual signer, this should be
-///   the `Sha512` digest of the message, optionally along with some application-specific
-///   context string.
-/// * This signer's [`SecretKey`],
-/// * The public [`GroupKey`] for this group of signing participants,
-/// * This signer's [`CommitmentShare`] being used in this instantiation, and
-/// * The list of all the currently participating [`Signer`]s.
-///
-/// # Returns
-///
-/// A Result whose `Ok` value contains a [`PartialThresholdSignature`], which
-/// should be sent to the [`SignatureAggregator`].  Otherwise, its `Err` value contains
-/// a string describing the error which occurred.
-pub fn sign(
-    message_hash: &[u8; 64],
-    my_secret_key: &SecretKey,
-    group_key: &GroupKey,
-    my_commitment_share: &CommitmentShare,
-    signers: &[Signer],
-) -> Result<PartialThresholdSignature, &'static str>
-{
-    let (binding_factors, Rs) = compute_binding_factors_and_group_commitment(&message_hash, &signers);
-    let R: RistrettoPoint = Rs.values().sum();
-    let challenge = compute_challenge(&message_hash, &group_key, &R);
-    let my_binding_factor = binding_factors.get(&my_secret_key.index).unwrap(); // XXX error handling
-    let all_participant_indices: Vec<u32> = signers.iter().map(|x| x.participant_index).collect();
-    let lambda: Scalar = calculate_lagrange_coefficients(&my_secret_key.index, &all_participant_indices)?;
-    let z = my_commitment_share.hiding.nonce +
-        (my_commitment_share.binding.nonce * my_binding_factor) +
-        (lambda * my_secret_key.key * challenge);
-
-    // [DIFFERENT_TO_PAPER] TODO Need to instead pass in the commitment
-    // share list and zero-out the used commitment share, which means the
-    // signature aggregator needs to tell us somehow which one they picked from
-    // our published list.
-    //
-    // I.... don't really love this API?
-    Ok(PartialThresholdSignature { index: my_secret_key.index, z })
+        // [DIFFERENT_TO_PAPER] TODO Need to instead pass in the commitment
+        // share list and zero-out the used commitment share, which means the
+        // signature aggregator needs to tell us somehow which one they picked from
+        // our published list.
+        //
+        // I.... don't really love this API?
+        Ok(PartialThresholdSignature { index: self.index, z })
+    }
 }
 
 /// A signature aggregator, in any of various states.
@@ -672,7 +675,7 @@ mod test {
         let signers = aggregator.get_signers();
         let message_hash = compute_message_hash(&context[..], &message[..]);
 
-        let p1_partial = sign(&message_hash, &p1_sk, &group_key, &p1_secret_comshares.commitments[0], signers).unwrap();
+        let p1_partial = p1_sk.sign(&message_hash, &group_key, &p1_secret_comshares.commitments[0], signers).unwrap();
         // XXX TODO We need to drop the used comshare
         // XXX maybe we should pass in the whole comshare list and the index to ensure it's dropped?
 
@@ -718,7 +721,7 @@ mod test {
         let signers = aggregator.get_signers();
         let message_hash = compute_message_hash(&context[..], &message[..]);
 
-        let p1_partial = sign(&message_hash, &p1_sk, &group_key, &p1_secret_comshares.commitments[0], signers).unwrap();
+        let p1_partial = p1_sk.sign(&message_hash, &group_key, &p1_secret_comshares.commitments[0], signers).unwrap();
 
         aggregator.include_partial_signature(p1_partial);
 
@@ -770,7 +773,7 @@ mod test {
         let signers = aggregator.get_signers();
         let message_hash = compute_message_hash(&context[..], &message[..]);
 
-        let p1_partial = sign(&message_hash, &p1_sk, &group_key, &p1_secret_comshares.commitments[0], signers).unwrap();
+        let p1_partial = p1_sk.sign(&message_hash, &group_key, &p1_secret_comshares.commitments[0], signers).unwrap();
 
         aggregator.include_partial_signature(p1_partial);
 
@@ -878,9 +881,9 @@ mod test {
         let signers = aggregator.get_signers();
         let message_hash = compute_message_hash(&context[..], &message[..]);
 
-        let p1_partial = sign(&message_hash, &p1_sk, &group_key, &p1_secret_comshares.commitments[0], signers).unwrap();
-        let p3_partial = sign(&message_hash, &p3_sk, &group_key, &p3_secret_comshares.commitments[0], signers).unwrap();
-        let p4_partial = sign(&message_hash, &p4_sk, &group_key, &p4_secret_comshares.commitments[0], signers).unwrap();
+        let p1_partial = p1_sk.sign(&message_hash, &group_key, &p1_secret_comshares.commitments[0], signers).unwrap();
+        let p3_partial = p3_sk.sign(&message_hash, &group_key, &p3_secret_comshares.commitments[0], signers).unwrap();
+        let p4_partial = p4_sk.sign(&message_hash, &group_key, &p4_secret_comshares.commitments[0], signers).unwrap();
 
         aggregator.include_partial_signature(p1_partial);
         aggregator.include_partial_signature(p3_partial);
@@ -965,8 +968,8 @@ mod test {
         let signers = aggregator.get_signers();
         let message_hash = compute_message_hash(&context[..], &message[..]);
 
-        let p1_partial = sign(&message_hash, &p1_sk, &group_key, &p1_secret_comshares.commitments[0], signers).unwrap();
-        let p2_partial = sign(&message_hash, &p2_sk, &group_key, &p2_secret_comshares.commitments[0], signers).unwrap();
+        let p1_partial = p1_sk.sign(&message_hash, &group_key, &p1_secret_comshares.commitments[0], signers).unwrap();
+        let p2_partial = p2_sk.sign(&message_hash, &group_key, &p2_secret_comshares.commitments[0], signers).unwrap();
 
         aggregator.include_partial_signature(p1_partial);
         aggregator.include_partial_signature(p2_partial);

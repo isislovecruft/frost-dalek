@@ -776,7 +776,7 @@ mod test {
     use super::*;
 
     use crate::precomputation::generate_commitment_share_lists;
-    use crate::signature::{calculate_lagrange_coefficients, compute_message_hash, sign};
+    use crate::signature::{calculate_lagrange_coefficients, compute_message_hash};
     use crate::signature::SignatureAggregator;
 
     /// Reconstruct the secret from enough (at least the threshold) already-verified shares.
@@ -872,8 +872,8 @@ mod test {
         let message_hash = compute_message_hash(&context[..], &message[..]);
 
         // XXX TODO SecretCommitmentShareList doesn't need to store the index
-        let p1_partial = sign(&message_hash, &p1_sk, &group_key, &p1_secret_comshares.commitments[0], signers).unwrap();
-        let p2_partial = sign(&message_hash, &p2_sk, &group_key, &p2_secret_comshares.commitments[0], signers).unwrap();
+        let p1_partial = p1_sk.sign(&message_hash, &group_key, &p1_secret_comshares.commitments[0], signers).unwrap();
+        let p2_partial = p2_sk.sign(&message_hash, &group_key, &p2_secret_comshares.commitments[0], signers).unwrap();
 
         aggregator.include_partial_signature(p1_partial);
         aggregator.include_partial_signature(p2_partial);

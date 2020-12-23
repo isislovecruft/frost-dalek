@@ -42,5 +42,4 @@ pub use keygen::Participant;
 pub use parameters::Parameters;
 pub use precomputation::generate_commitment_share_lists;
 pub use signature::compute_message_hash;
-pub use signature::sign;
 pub use signature::SignatureAggregator;

@@ -15,7 +15,6 @@ use rand::rngs::OsRng;
 
 use frost_dalek::compute_message_hash;
 use frost_dalek::generate_commitment_share_lists;
-use frost_dalek::sign;
 use frost_dalek::DistributedKeyGeneration;
 use frost_dalek::Parameters;
 use frost_dalek::Participant;
@@ -118,9 +117,9 @@ fn signing_and_verification_3_out_of_5() {
     let signers = aggregator.get_signers();
     let message_hash = compute_message_hash(&context[..], &message[..]);
 
-    let p1_partial = sign(&message_hash, &p1_sk, &group_key, &p1_secret_comshares.commitments[0], signers).unwrap();
-    let p3_partial = sign(&message_hash, &p3_sk, &group_key, &p3_secret_comshares.commitments[0], signers).unwrap();
-    let p4_partial = sign(&message_hash, &p4_sk, &group_key, &p4_secret_comshares.commitments[0], signers).unwrap();
+    let p1_partial = p1_sk.sign(&message_hash, &group_key, &p1_secret_comshares.commitments[0], signers).unwrap();
+    let p3_partial = p3_sk.sign(&message_hash, &group_key, &p3_secret_comshares.commitments[0], signers).unwrap();
+    let p4_partial = p4_sk.sign(&message_hash, &group_key, &p4_secret_comshares.commitments[0], signers).unwrap();
 
     aggregator.include_partial_signature(p1_partial);
     aggregator.include_partial_signature(p3_partial);
@@ -193,8 +192,8 @@ fn signing_and_verification_with_ed25519_dalek_2_out_of_3() {
     let signers = aggregator.get_signers();
     let message_hash = compute_message_hash(&context[..], &message[..]);
 
-    let p1_partial = sign(&message_hash, &p1_sk, &group_key, &p1_secret_comshares.commitments[0], signers).unwrap();
-    let p3_partial = sign(&message_hash, &p3_sk, &group_key, &p3_secret_comshares.commitments[0], signers).unwrap();
+    let p1_partial = p1_sk.sign(&message_hash, &group_key, &p1_secret_comshares.commitments[0], signers).unwrap();
+    let p3_partial = p3_sk.sign(&message_hash, &group_key, &p3_secret_comshares.commitments[0], signers).unwrap();
 
     aggregator.include_partial_signature(p1_partial);
     aggregator.include_partial_signature(p3_partial);
