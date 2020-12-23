@@ -318,7 +318,7 @@ impl SecretKey {
         let (binding_factors, Rs) = compute_binding_factors_and_group_commitment(&message_hash, &signers);
         let R: RistrettoPoint = Rs.values().sum();
         let challenge = compute_challenge(&message_hash, &group_key, &R);
-        let my_binding_factor = binding_factors.get(&self.index).unwrap(); // XXX error handling
+        let my_binding_factor = binding_factors.get(&self.index).ok_or("Could not compute our blinding factor")?;
         let all_participant_indices: Vec<u32> = signers.iter().map(|x| x.participant_index).collect();
         let lambda: Scalar = calculate_lagrange_coefficients(&self.index, &all_participant_indices)?;
         let z = my_commitment_share.hiding.nonce +
