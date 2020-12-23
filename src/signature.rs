@@ -664,8 +664,9 @@ mod test {
         let signers = aggregator.get_signers();
         let message_hash = compute_message_hash(&context[..], &message[..]);
 
-        // XXX TODO SecretCommitmentShareList doesn't need to store the index
         let p1_partial = sign(&message_hash, &p1_sk, &group_key, &p1_secret_comshares.commitments[0], signers).unwrap();
+        // XXX TODO We need to drop the used comshare
+        // XXX maybe we should pass in the whole comshare list and the index to ensure it's dropped?
 
         aggregator.include_partial_signature(p1_partial);
 
@@ -709,7 +710,6 @@ mod test {
         let signers = aggregator.get_signers();
         let message_hash = compute_message_hash(&context[..], &message[..]);
 
-        // XXX TODO SecretCommitmentShareList doesn't need to store the index
         let p1_partial = sign(&message_hash, &p1_sk, &group_key, &p1_secret_comshares.commitments[0], signers).unwrap();
 
         aggregator.include_partial_signature(p1_partial);
@@ -762,7 +762,6 @@ mod test {
         let signers = aggregator.get_signers();
         let message_hash = compute_message_hash(&context[..], &message[..]);
 
-        // XXX TODO SecretCommitmentShareList doesn't need to store the index
         let p1_partial = sign(&message_hash, &p1_sk, &group_key, &p1_secret_comshares.commitments[0], signers).unwrap();
 
         aggregator.include_partial_signature(p1_partial);
@@ -958,7 +957,6 @@ mod test {
         let signers = aggregator.get_signers();
         let message_hash = compute_message_hash(&context[..], &message[..]);
 
-        // XXX TODO SecretCommitmentShareList doesn't need to store the index
         let p1_partial = sign(&message_hash, &p1_sk, &group_key, &p1_secret_comshares.commitments[0], signers).unwrap();
         let p2_partial = sign(&message_hash, &p2_sk, &group_key, &p2_secret_comshares.commitments[0], signers).unwrap();
 

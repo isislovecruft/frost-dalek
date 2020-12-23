@@ -1042,7 +1042,6 @@ mod test {
         let p4_state = p4_state.to_round_two(p4_my_secret_shares).unwrap();
         let p5_state = p5_state.to_round_two(p5_my_secret_shares).unwrap();
 
-        // XXX make a method for getting the public key share/commitment
         let (p1_group_key, _p1_secret_key) = p1_state.finish(p1.public_key().unwrap()).unwrap();
         let (p2_group_key, _p2_secret_key) = p2_state.finish(p2.public_key().unwrap()).unwrap();
         let (p3_group_key, _p3_secret_key) = p3_state.finish(p3.public_key().unwrap()).unwrap();
@@ -1108,7 +1107,6 @@ mod test {
             let p2_state = p2_state.to_round_two(p2_my_secret_shares)?;
             let p3_state = p3_state.to_round_two(p3_my_secret_shares)?;
 
-            // XXX make a method for getting the public key share/commitment
             let (p1_group_key, _p1_secret_key) = p1_state.finish(p1.public_key().unwrap())?;
             let (p2_group_key, _p2_secret_key) = p2_state.finish(p2.public_key().unwrap())?;
             let (p3_group_key, _p3_secret_key) = p3_state.finish(p3.public_key().unwrap())?;

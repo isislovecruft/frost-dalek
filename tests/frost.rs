@@ -118,7 +118,6 @@ fn signing_and_verification_3_out_of_5() {
     let signers = aggregator.get_signers();
     let message_hash = compute_message_hash(&context[..], &message[..]);
 
-    // XXX TODO SecretCommitmentShareList doesn't need to store the index
     let p1_partial = sign(&message_hash, &p1_sk, &group_key, &p1_secret_comshares.commitments[0], signers).unwrap();
     let p3_partial = sign(&message_hash, &p3_sk, &group_key, &p3_secret_comshares.commitments[0], signers).unwrap();
     let p4_partial = sign(&message_hash, &p4_sk, &group_key, &p4_secret_comshares.commitments[0], signers).unwrap();
@@ -194,7 +193,6 @@ fn signing_and_verification_with_ed25519_dalek_2_out_of_3() {
     let signers = aggregator.get_signers();
     let message_hash = compute_message_hash(&context[..], &message[..]);
 
-    // XXX TODO SecretCommitmentShareList doesn't need to store the index
     let p1_partial = sign(&message_hash, &p1_sk, &group_key, &p1_secret_comshares.commitments[0], signers).unwrap();
     let p3_partial = sign(&message_hash, &p3_sk, &group_key, &p3_secret_comshares.commitments[0], signers).unwrap();
 
