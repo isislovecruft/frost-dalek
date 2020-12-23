@@ -611,7 +611,7 @@ impl ThresholdSignature {
     /// of any misbehaving participants.
     pub fn verify(&self, group_key: &GroupKey, message_hash: &[u8; 64]) -> Result<(), ()> {
         let c_prime = compute_challenge(&message_hash, &group_key, &self.R);
-        let R_prime = (&RISTRETTO_BASEPOINT_TABLE * &self.z) - (group_key.0 * c_prime);
+        let R_prime = RistrettoPoint::vartime_double_scalar_mul_basepoint(&c_prime, &-group_key.0, &self.z);
 
         match self.R.compress() == R_prime.compress() {
             true => Ok(()),
