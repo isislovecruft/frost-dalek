@@ -473,11 +473,11 @@ impl SignatureAggregator<Initial<'_>> {
     }
 
     /// Helper function to get the remaining signers who were expected to sign,
-    /// but have not yet contributed their [`PartialSignature`]s.
+    /// but have not yet contributed their [`PartialThresholdSignature`]s.
     ///
     /// This can be used by an honest aggregator who wishes to ensure that the
     /// aggregation procedure is ready to be run, or who wishes to be able to
-    /// remind/poll individual signers for their [`PartialSignature`]
+    /// remind/poll individual signers for their [`PartialThresholdSignature`]
     /// contribution.
     ///
     /// # Returns
