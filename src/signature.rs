@@ -462,7 +462,7 @@ impl SignatureAggregator<Initial<'_>> {
     ///
     /// # Returns
     ///
-    /// A `Vec<Signer>` of the participating signers in this round.
+    /// A `&Vec<Signer>` of the participating signers in this round.
     pub fn get_signers<'sa>(&'sa mut self) -> &'sa Vec<Signer> {
         // .sort() must be called before .dedup() because the latter only
         // removes consecutive repeated elements.
