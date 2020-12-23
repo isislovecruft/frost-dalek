@@ -10,6 +10,11 @@
 //! FROST signatures and their creation.
 
 #[cfg(feature = "std")]
+use std::boxed::Box;
+#[cfg(feature = "alloc")]
+use alloc::boxed::Box;
+
+#[cfg(feature = "std")]
 use std::collections::HashMap;
 #[cfg(feature = "std")]
 use std::collections::hash_map::Values;
@@ -36,7 +41,7 @@ use crate::precomputation::CommitmentShare;
 //     signer's long-term secret key; it must be prevented at all costs.
 
 /// An individual signer in the threshold signature scheme.
-#[derive(Debug, Eq)]
+#[derive(Clone, Copy, Debug, Eq)]
 pub struct Signer {
     /// The participant index of this signer.
     pub participant_index: u32,
@@ -153,18 +158,21 @@ impl $type {
 //
 // XXX TODO there might be a more efficient way to optimise this data structure
 //     and its algorithms?
+#[derive(Debug)]
 struct SignerRs(pub(crate) HashMap<[u8; 4], RistrettoPoint>);
 
 impl_indexed_hashmap!(Type = SignerRs, Item = RistrettoPoint);
 
 /// A type for storing signers' partial threshold signatures along with the
 /// respective signer participant index.
+#[derive(Debug)]
 pub(crate) struct PartialThresholdSignatures(pub(crate) HashMap<[u8; 4], Scalar>);
 
 impl_indexed_hashmap!(Type = PartialThresholdSignatures, Item = Scalar);
 
 /// A type for storing signers' individual public keys along with the respective
 /// signer participant index.
+#[derive(Debug)]
 pub(crate) struct IndividualPublicKeys(pub(crate) HashMap<[u8; 4], RistrettoPoint>);
 
 impl_indexed_hashmap!(Type = IndividualPublicKeys, Item = RistrettoPoint);
@@ -237,7 +245,7 @@ fn compute_challenge(message_hash: &[u8; 64], group_key: &GroupKey, R: &Ristrett
 
     // XXX [PAPER] Decide if we want a context string for the challenge.  This
     // would break compatibility with standard ed25519 libraries for verification.
-    //h2.update(b"FROST-SHA512");
+    h2.update(b"FROST-SHA512");
     h2.update(R.compress().as_bytes());
     h2.update(group_key.to_bytes());
     h2.update(&message_hash[..]);
@@ -277,6 +285,8 @@ pub(crate) fn calculate_lagrange_coefficients(
     Ok(num * den.invert())
 }
 
+// XXX TODO This should be a method on SecretKey
+
 /// Compute an individual signer's [`PartialThresholdSignature`] contribution to
 /// a [`ThresholdSignature`] on a `message`.
 ///
@@ -292,8 +302,8 @@ pub(crate) fn calculate_lagrange_coefficients(
 ///
 /// # Returns
 ///
-/// A Result whose Ok value contains a [`PartialThresholdSignature`], which
-/// should be sent to the Signature Aggregator.  Otherwise, its Err value contains
+/// A Result whose `Ok` value contains a [`PartialThresholdSignature`], which
+/// should be sent to the [`SignatureAggregator`].  Otherwise, its `Err` value contains
 /// a string describing the error which occurred.
 pub fn sign(
     message_hash: &[u8; 64],
@@ -322,20 +332,18 @@ pub fn sign(
     Ok(PartialThresholdSignature { index: my_secret_key.index, z })
 }
 
-/// A signature aggregator is an untrusted party who coalesces all of the
-/// participating signers' published commitment shares and their
-/// [`PartialThresholdSignature`] and creates the final [`ThresholdSignature`].
-/// The signature aggregator may even be one of the `t` participants in this
-/// signing operation.
-pub struct SignatureAggregator<'sa> {
+/// A signature aggregator, in any of various states.
+pub trait Aggregator {}
+
+/// The internal state of a signature aggregator.
+#[derive(Debug)]
+pub(crate) struct AggregatorState {
     /// The protocol instance parameters.
     pub(crate) parameters: Parameters,
     /// The set of signing participants for this round.
     pub(crate) signers: Vec<Signer>,
     /// The signer's public keys for verifying their [`PartialThresholdSignature`].
     pub(crate) public_keys: IndividualPublicKeys,
-    /// The message to be signed.
-    pub(crate) message: &'sa [u8],
     /// The partial signatures from individual participants which have been
     /// collected thus far.
     pub(crate) partial_signatures: PartialThresholdSignatures,
@@ -343,15 +351,85 @@ pub struct SignatureAggregator<'sa> {
     pub(crate) group_key: GroupKey,
 }
 
-impl SignatureAggregator<'_> {
+/// A signature aggregator is an untrusted party who coalesces all of the
+/// participating signers' published commitment shares and their
+/// [`PartialThresholdSignature`] and creates the final [`ThresholdSignature`].
+/// The signature aggregator may even be one of the `t` participants in this
+/// signing operation.
+#[derive(Debug)]
+pub struct SignatureAggregator<A: Aggregator> {
+    /// The aggregator's actual state, shared across types.
+    pub(crate) state: Box<AggregatorState>,
+    /// The aggregator's additional state.
+    pub(crate) aggregator: A,
+}
+
+/// The initial state for a [`SignatureAggregator`], which may include invalid
+/// or non-sensical data.
+#[derive(Debug)]
+pub struct Initial<'sa> {
+    /// An optional context string for computing the message hash.
+    pub(crate) context: &'sa [u8],
+    /// The message to be signed.
+    pub(crate) message: &'sa [u8],
+}
+
+impl Aggregator for Initial<'_> {}
+
+/// The finalized state for a [`SignatureAggregator`], which has thoroughly
+/// validated its data.
+///
+/// # Guarantees
+///
+/// * There are no duplicate signing attempts from the same individual signer.
+/// * All expected signers have contributed a partial signature.
+/// * All expected signers have a public key.
+// XXX Should we check that these public keys are valid?
+///
+/// This leaves only one remaining failure mode for the actual aggregation of
+/// the partial signatures:
+///
+/// * Any signer could have contributed a malformed partial signature.
+#[derive(Debug)]
+pub struct Finalized {
+    /// The hashed context and message for signing.
+    pub(crate) message_hash: [u8; 64],
+}
+
+impl Aggregator for Finalized {}
+
+impl SignatureAggregator<Initial<'_>> {
     /// Construct a new signature aggregator from some protocol instantiation
     /// `parameters` and a `message` to be signed.
-    pub fn new(parameters: Parameters, group_key: GroupKey, message: &'_ [u8]) -> SignatureAggregator<'_> {
+    ///
+    /// # Inputs
+    ///
+    /// * The [`Parameters`] for this threshold signing operation,
+    /// * The public [`GroupKey`] for the intended sets of signers,
+    /// * An optional `context` string for computing the message hash,
+    /// * The `message` to be signed.
+    ///
+    /// # Notes
+    ///
+    /// The `context` and the `message` string should be given to the aggregator
+    /// so that all signers can query them before deciding whether or not to
+    /// sign.
+    ///
+    /// # Returns
+    ///
+    /// A new [`SignatureAggregator`].
+    pub fn new<'sa>(
+        parameters: Parameters,
+        group_key: GroupKey,
+        context: &'sa [u8],
+        message: &'sa [u8],
+    ) -> SignatureAggregator<Initial<'sa>> {
         let signers: Vec<Signer> = Vec::with_capacity(parameters.t as usize);
         let public_keys = IndividualPublicKeys::new();
         let partial_signatures = PartialThresholdSignatures::new();
+        let state = AggregatorState { parameters, signers, public_keys, partial_signatures, group_key };
 
-        SignatureAggregator { parameters, signers, public_keys, message, partial_signatures, group_key }
+        SignatureAggregator { state: Box::new(state), aggregator: Initial { context, message } }
     }
 
     /// Include a signer in the protocol.
@@ -376,8 +454,8 @@ impl SignatureAggregator<'_> {
                    "Tried to add signer with participant index {}, but public key is for participant with index {}",
                    participant_index, public_key.index);
 
-        self.signers.push(Signer { participant_index, published_commitment_share });
-        self.public_keys.insert(&public_key.index, public_key.share);
+        self.state.signers.push(Signer { participant_index, published_commitment_share });
+        self.state.public_keys.insert(&public_key.index, public_key.share);
     }
 
     /// Get the list of partipating signers.
@@ -388,17 +466,80 @@ impl SignatureAggregator<'_> {
     pub fn get_signers<'sa>(&'sa mut self) -> &'sa Vec<Signer> {
         // .sort() must be called before .dedup() because the latter only
         // removes consecutive repeated elements.
-        self.signers.sort();
-        self.signers.dedup();
+        self.state.signers.sort();
+        self.state.signers.dedup();
 
-        &self.signers
+        &self.state.signers
+    }
+
+    /// Helper function to get the remaining signers who were expected to sign,
+    /// but have not yet contributed their [`PartialSignature`]s.
+    ///
+    /// This can be used by an honest aggregator who wishes to ensure that the
+    /// aggregation procedure is ready to be run, or who wishes to be able to
+    /// remind/poll individual signers for their [`PartialSignature`]
+    /// contribution.
+    ///
+    /// # Returns
+    ///
+    /// A sorted `Vec` of unique [`Signer`]s who have yet to contribute their
+    /// partial signatures.
+    pub fn get_remaining_signers(&self) -> Vec<Signer> {
+        let mut remaining_signers: Vec<Signer> = Vec::new();
+
+        for signer in self.state.signers.iter() {
+            if self.state.partial_signatures.get(&signer.participant_index).is_none() {
+                remaining_signers.push(*signer);
+            }
+        }
+        remaining_signers.sort();
+        remaining_signers.dedup();
+        remaining_signers
     }
 
     /// Add a [`PartialThresholdSignature`] to be included in the aggregation.
     pub fn include_partial_signature(&mut self, partial_signature: PartialThresholdSignature) {
-        self.partial_signatures.insert(&partial_signature.index, partial_signature.z);
+        self.state.partial_signatures.insert(&partial_signature.index, partial_signature.z);
     }
 
+    /// Ensure that this signature aggregator is in a proper state to run the aggregation protocol.
+    pub fn finalize(mut self) -> Result<SignatureAggregator<Finalized>, HashMap<u32, &'static str>> {
+        let mut misbehaving_participants: HashMap<u32, &'static str> = HashMap::new();
+        let remaining_signers = self.get_remaining_signers();
+
+        // [DIFFERENT_TO_PAPER] We're reporting missing partial signatures which
+        // could possibly be the fault of the aggregator, but here we explicitly
+        // make it the aggregator's fault and problem.
+        if ! remaining_signers.is_empty() {
+            // We call the aggregator "participant 0" for the sake of error messages.
+            misbehaving_participants.insert(0, "Missing remaining signer(s)");
+
+            for signer in remaining_signers.iter() {
+                misbehaving_participants.insert(signer.participant_index, "Missing partial signature");
+            }
+        }
+
+        // Ensure that our new state is ordered and deduplicated.
+        self.state.signers = self.get_signers().clone();
+
+        for signer in self.state.signers.iter() {
+            if self.state.public_keys.get(&signer.participant_index).is_none() {
+                // XXX These should be Vec<&'static str> for full error reporting
+                misbehaving_participants.insert(signer.participant_index, "Missing public key");
+            }
+        }
+
+        if ! misbehaving_participants.is_empty() {
+            return Err(misbehaving_participants);
+        }
+
+        let message_hash = compute_message_hash(&self.aggregator.context, &self.aggregator.message);
+
+        Ok(SignatureAggregator { state: self.state, aggregator: Finalized { message_hash } })
+    }
+}
+
+impl SignatureAggregator<Finalized> {
     /// Aggregate a set of previously-collected partial signatures.
     ///
     /// # Returns
@@ -409,82 +550,51 @@ impl SignatureAggregator<'_> {
     ///
     /// If the Hashmap is empty, the aggregator did not have \(( t' \)) partial signers
     /// s.t. \(( t \le t' \le n \)).
-    pub fn aggregate(&mut self) -> Result<ThresholdSignature, HashMap<u32, &'static str>> {
-        // .sort() must be called before .dedup() because the latter only
-        // removes consecutive repeated elements.
-        self.signers.sort();
-        self.signers.dedup();
-
+    pub fn aggregate(&self) -> Result<ThresholdSignature, HashMap<u32, &'static str>> {
         let mut misbehaving_participants: HashMap<u32, &'static str> = HashMap::new();
         
-        // XXX TODO Should actually check that the indices match.
-        if self.signers.len() < self.parameters.t as usize {
-            return Err(misbehaving_participants);
-        }
-
-        // XXX TODO allow application specific context strings.
-        let message_hash = compute_message_hash(b"XXX MAKE A REAL CONTEXT STRING", &self.message);
-        let (_, Rs) = compute_binding_factors_and_group_commitment(&message_hash, &self.signers);
+        let (_, Rs) = compute_binding_factors_and_group_commitment(&self.aggregator.message_hash, &self.state.signers);
         let R: RistrettoPoint = Rs.values().sum();
-        let c = compute_challenge(&message_hash, &self.group_key, &R);
-        let all_participant_indices: Vec<u32> = self.signers.iter().map(|x| x.participant_index).collect();
+        let c = compute_challenge(&self.aggregator.message_hash, &self.state.group_key, &R);
+        let all_participant_indices: Vec<u32> = self.state.signers.iter().map(|x| x.participant_index).collect();
         let mut z = Scalar::zero();
 
-        for signer in self.signers.iter() {
+        for signer in self.state.signers.iter() {
             // [DIFFERENT_TO_PAPER] We're not just pulling lambda out of our
             // ass, instead to get the correct algebraic properties to allow for
             // partial signature aggregation with t <= #participant <= n, we
             // have to do Langrangian polynomial interpolation.
             //
-            // [DIFFERENT_TO_PAPER] Also, we're reporting attempted
-            // duplicate signers from the calulation of the Lagrange
-            // coefficients as being misbehaving users.
-            let lambda = match calculate_lagrange_coefficients(&signer.participant_index, &all_participant_indices) {
-                Ok(x)  => x,
-                Err(_) => {
-                    misbehaving_participants.insert(signer.participant_index, "Could not calculate lambda");
-                    continue;
-                }
-            };
+            // This unwrap() cannot fail, since the attempted division by zero in
+            // the calculation of the Lagrange interpolation cannot happen,
+            // because we use the typestate pattern,
+            // i.e. SignatureAggregator<Initial>.finalize(), to ensure that
+            // there are no duplicate signers, which is the only thing that
+            // would cause a denominator of zero.
+            let lambda = calculate_lagrange_coefficients(&signer.participant_index, &all_participant_indices).unwrap();
 
-            // [DIFFERENT_TO_PAPER] We're reporting missing partial signatures
-            // which could possibly be the fault of the aggregator.
-            let partial_sig = match self.partial_signatures.get(&signer.participant_index) {
-                Some(z_i) => z_i,
-                None => {
-                    misbehaving_participants.insert(signer.participant_index, "Missing partial signature");
-                    continue;
-                },
-            };
+            // Similar to above, this unwrap() cannot fail, because
+            // SignatureAggregator<Initial>.finalize() checks that we have
+            // partial signature for every expected signer.
+            let partial_sig = self.state.partial_signatures.get(&signer.participant_index).unwrap();
 
-            let Y_i = match self.public_keys.get(&signer.participant_index) {
-                Some(x) => x,
-                None => {
-                    misbehaving_participants.insert(signer.participant_index, "Missing public key");
-                    continue;
-                }
-            };
+            // Again, this unwrap() cannot fail, because of the checks in finalize().
+            let Y_i = self.state.public_keys.get(&signer.participant_index).unwrap();
 
             let check = &RISTRETTO_BASEPOINT_TABLE * partial_sig;
 
-            match Rs.get(&signer.participant_index) {
-                Some(R_i) => {
-                    if check == R_i + (Y_i * (c * lambda)) {
-                        z += partial_sig;
-                    } else {
-                        misbehaving_participants.insert(signer.participant_index, "Incorrect partial signature");
-                    }
-                },
-                // [DIFFERENT_TO_PAPER] We're reporting missing signers
-                // (possibly the fault of the aggregator) as well as misbehaved
-                //  participants.
-                None => {
-                    misbehaving_participants.insert(signer.participant_index, "Missing signer that aggregator expected");
-                },
+            // Again, this unwrap() cannot fail, because we check the
+            // participant indexes against the expected ones in finalize().
+            let R_i = Rs.get(&signer.participant_index).unwrap();
+
+            if check == R_i + (Y_i * (c * lambda)) {
+                z += partial_sig;
+            } else {
+                misbehaving_participants.insert(signer.participant_index, "Incorrect partial signature");
             }
         }
 
-        match !misbehaving_participants.is_empty() {
+        match ! misbehaving_participants.is_empty() {
             true => Err(misbehaving_participants),
             false => Ok(ThresholdSignature {z, R}),
         }
@@ -543,29 +653,28 @@ mod test {
 
         let (group_key, p1_sk) = result.unwrap();
 
+        let context = b"CONTEXT STRING STOLEN FROM DALEK TEST SUITE";
         let message = b"This is a test of the tsunami alert system. This is only a test.";
         let (p1_public_comshares, p1_secret_comshares) = generate_commitment_share_lists(&mut OsRng, 1, 1);
 
-        let mut aggregator = SignatureAggregator::new(params, group_key, &message[..]);
+        let mut aggregator = SignatureAggregator::new(params, group_key, &context[..], &message[..]);
 
         aggregator.include_signer(1, p1_public_comshares.commitments[0], (&p1_sk).into());
 
         let signers = aggregator.get_signers();
-
-        let message_hash = compute_message_hash(b"XXX MAKE A REAL CONTEXT STRING", &message[..]);
+        let message_hash = compute_message_hash(&context[..], &message[..]);
 
         // XXX TODO SecretCommitmentShareList doesn't need to store the index
         let p1_partial = sign(&message_hash, &p1_sk, &group_key, &p1_secret_comshares.commitments[0], signers).unwrap();
 
         aggregator.include_partial_signature(p1_partial);
 
-        // XXX TODO aggregator should be a new type here to ensure we have proper state.
+        let aggregator = aggregator.finalize().unwrap();
         let signing_result = aggregator.aggregate();
 
         assert!(signing_result.is_ok());
 
         let threshold_signature = signing_result.unwrap();
-
         let verification_result = threshold_signature.verify(&group_key, &message_hash);
 
         println!("{:?}", verification_result);
@@ -589,23 +698,23 @@ mod test {
 
         let (group_key, p1_sk) = p1_state.finish(p1.public_key().unwrap()).unwrap();
 
+        let context = b"CONTEXT STRING STOLEN FROM DALEK TEST SUITE";
         let message = b"This is a test of the tsunami alert system. This is only a test.";
         let (p1_public_comshares, p1_secret_comshares) = generate_commitment_share_lists(&mut OsRng, 1, 1);
 
-        let mut aggregator = SignatureAggregator::new(params, group_key, &message[..]);
+        let mut aggregator = SignatureAggregator::new(params, group_key, &context[..], &message[..]);
 
         aggregator.include_signer(1, p1_public_comshares.commitments[0], (&p1_sk).into());
 
         let signers = aggregator.get_signers();
-
-        let message_hash = compute_message_hash(b"XXX MAKE A REAL CONTEXT STRING", &message[..]);
+        let message_hash = compute_message_hash(&context[..], &message[..]);
 
         // XXX TODO SecretCommitmentShareList doesn't need to store the index
         let p1_partial = sign(&message_hash, &p1_sk, &group_key, &p1_secret_comshares.commitments[0], signers).unwrap();
 
         aggregator.include_partial_signature(p1_partial);
 
-        // XXX TODO aggregator should be a new type here to ensure we have proper state.
+        let aggregator = aggregator.finalize().unwrap();
         let threshold_signature = aggregator.aggregate().unwrap();
         let verification_result = threshold_signature.verify(&group_key, &message_hash);
 
@@ -642,23 +751,23 @@ mod test {
         let (group_key, p1_sk) = p1_state.finish(p1.public_key().unwrap()).unwrap();
         let (_, _p2_sk) = p2_state.finish(p2.public_key().unwrap()).unwrap();
 
+        let context = b"CONTEXT STRING STOLEN FROM DALEK TEST SUITE";
         let message = b"This is a test of the tsunami alert system. This is only a test.";
         let (p1_public_comshares, p1_secret_comshares) = generate_commitment_share_lists(&mut OsRng, 1, 1);
 
-        let mut aggregator = SignatureAggregator::new(params, group_key, &message[..]);
+        let mut aggregator = SignatureAggregator::new(params, group_key, &context[..], &message[..]);
 
         aggregator.include_signer(1, p1_public_comshares.commitments[0], (&p1_sk).into());
 
         let signers = aggregator.get_signers();
-
-        let message_hash = compute_message_hash(b"XXX MAKE A REAL CONTEXT STRING", &message[..]);
+        let message_hash = compute_message_hash(&context[..], &message[..]);
 
         // XXX TODO SecretCommitmentShareList doesn't need to store the index
         let p1_partial = sign(&message_hash, &p1_sk, &group_key, &p1_secret_comshares.commitments[0], signers).unwrap();
 
         aggregator.include_partial_signature(p1_partial);
 
-        // XXX TODO aggregator should be a new type here to ensure we have proper state.
+        let aggregator = aggregator.finalize().unwrap();
         let threshold_signature = aggregator.aggregate().unwrap();
         let verification_result = threshold_signature.verify(&group_key, &message_hash);
 
@@ -747,22 +856,21 @@ mod test {
         let (_, p4_sk) = p4_state.finish(p4.public_key().unwrap()).unwrap();
         let (_, _) = p5_state.finish(p5.public_key().unwrap()).unwrap();
 
+        let context = b"CONTEXT STRING STOLEN FROM DALEK TEST SUITE";
         let message = b"This is a test of the tsunami alert system. This is only a test.";
         let (p1_public_comshares, p1_secret_comshares) = generate_commitment_share_lists(&mut OsRng, 1, 1);
         let (p3_public_comshares, p3_secret_comshares) = generate_commitment_share_lists(&mut OsRng, 3, 1);
         let (p4_public_comshares, p4_secret_comshares) = generate_commitment_share_lists(&mut OsRng, 4, 1);
 
-        let mut aggregator = SignatureAggregator::new(params, group_key, &message[..]);
+        let mut aggregator = SignatureAggregator::new(params, group_key, &context[..], &message[..]);
 
         aggregator.include_signer(1, p1_public_comshares.commitments[0], (&p1_sk).into());
         aggregator.include_signer(3, p3_public_comshares.commitments[0], (&p3_sk).into());
         aggregator.include_signer(4, p4_public_comshares.commitments[0], (&p4_sk).into());
 
         let signers = aggregator.get_signers();
+        let message_hash = compute_message_hash(&context[..], &message[..]);
 
-        let message_hash = compute_message_hash(b"XXX MAKE A REAL CONTEXT STRING", &message[..]);
-
-        // XXX TODO SecretCommitmentShareList doesn't need to store the index
         let p1_partial = sign(&message_hash, &p1_sk, &group_key, &p1_secret_comshares.commitments[0], signers).unwrap();
         let p3_partial = sign(&message_hash, &p3_sk, &group_key, &p3_secret_comshares.commitments[0], signers).unwrap();
         let p4_partial = sign(&message_hash, &p4_sk, &group_key, &p4_secret_comshares.commitments[0], signers).unwrap();
@@ -771,7 +879,7 @@ mod test {
         aggregator.include_partial_signature(p3_partial);
         aggregator.include_partial_signature(p4_partial);
 
-        // XXX TODO aggregator should be a new type here to ensure we have proper state.
+        let aggregator = aggregator.finalize().unwrap();
         let threshold_signature = aggregator.aggregate().unwrap();
         let verification_result = threshold_signature.verify(&group_key, &message_hash);
 
@@ -837,18 +945,18 @@ mod test {
 
         let (params, p1_sk, p2_sk, _p3_sk, group_key) = keygen_protocol.unwrap();
 
+        let context = b"CONTEXT STRING STOLEN FROM DALEK TEST SUITE";
         let message = b"This is a test of the tsunami alert system. This is only a test.";
         let (p1_public_comshares, p1_secret_comshares) = generate_commitment_share_lists(&mut OsRng, 1, 1);
         let (p2_public_comshares, p2_secret_comshares) = generate_commitment_share_lists(&mut OsRng, 2, 1);
 
-        let mut aggregator = SignatureAggregator::new(params, group_key.clone(), &message[..]);
+        let mut aggregator = SignatureAggregator::new(params, group_key.clone(), &context[..], &message[..]);
 
         aggregator.include_signer(1, p1_public_comshares.commitments[0], (&p1_sk).into());
         aggregator.include_signer(2, p2_public_comshares.commitments[0], (&p2_sk).into());
 
         let signers = aggregator.get_signers();
-
-        let message_hash = compute_message_hash(b"XXX MAKE A REAL CONTEXT STRING", &message[..]);
+        let message_hash = compute_message_hash(&context[..], &message[..]);
 
         // XXX TODO SecretCommitmentShareList doesn't need to store the index
         let p1_partial = sign(&message_hash, &p1_sk, &group_key, &p1_secret_comshares.commitments[0], signers).unwrap();
@@ -857,13 +965,12 @@ mod test {
         aggregator.include_partial_signature(p1_partial);
         aggregator.include_partial_signature(p2_partial);
 
-        // XXX TODO aggregator should be a new type here to ensure we have proper state.
+        let aggregator = aggregator.finalize().unwrap();
         let signing_result = aggregator.aggregate();
 
         assert!(signing_result.is_ok());
 
         let threshold_signature = signing_result.unwrap();
-
         let verification_result = threshold_signature.verify(&group_key, &message_hash);
 
         println!("{:?}", verification_result);
@@ -874,12 +981,13 @@ mod test {
     #[test]
     fn aggregator_get_signers() {
         let params = Parameters { n: 3, t: 2 };
+        let context = b"CONTEXT STRING STOLEN FROM DALEK TEST SUITE";
         let message = b"This is a test of the tsunami alert system. This is only a test.";
 
         let (p1_public_comshares, _) = generate_commitment_share_lists(&mut OsRng, 1, 1);
         let (p2_public_comshares, _) = generate_commitment_share_lists(&mut OsRng, 2, 1);
 
-        let mut aggregator = SignatureAggregator::new(params, GroupKey(RistrettoPoint::identity()), &message[..]);
+        let mut aggregator = SignatureAggregator::new(params, GroupKey(RistrettoPoint::identity()), &context[..], &message[..]);
 
         let p1_sk = SecretKey{ index: 1, key: Scalar::random(&mut OsRng) };
         let p2_sk = SecretKey{ index: 2, key: Scalar::random(&mut OsRng) };

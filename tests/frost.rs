@@ -9,7 +9,6 @@
 
 //! Integration tests for FROST.
 
-use ed25519_dalek::Signature;
 use ed25519_dalek::Verifier;
 
 use rand::rngs::OsRng;
@@ -104,20 +103,20 @@ fn signing_and_verification_3_out_of_5() {
     let (_, p4_sk) = p4_state.finish(p4.public_key().unwrap()).unwrap();
     let (_, _) = p5_state.finish(p5.public_key().unwrap()).unwrap();
 
+    let context = b"CONTEXT STRING STOLEN FROM DALEK TEST SUITE";
     let message = b"This is a test of the tsunami alert system. This is only a test.";
     let (p1_public_comshares, p1_secret_comshares) = generate_commitment_share_lists(&mut OsRng, 1, 1);
     let (p3_public_comshares, p3_secret_comshares) = generate_commitment_share_lists(&mut OsRng, 3, 1);
     let (p4_public_comshares, p4_secret_comshares) = generate_commitment_share_lists(&mut OsRng, 4, 1);
 
-    let mut aggregator = SignatureAggregator::new(params, group_key, &message[..]);
+    let mut aggregator = SignatureAggregator::new(params, group_key, &context[..], &message[..]);
 
     aggregator.include_signer(1, p1_public_comshares.commitments[0], (&p1_sk).into());
     aggregator.include_signer(3, p3_public_comshares.commitments[0], (&p3_sk).into());
     aggregator.include_signer(4, p4_public_comshares.commitments[0], (&p4_sk).into());
 
     let signers = aggregator.get_signers();
-
-    let message_hash = compute_message_hash(b"XXX MAKE A REAL CONTEXT STRING", &message[..]);
+    let message_hash = compute_message_hash(&context[..], &message[..]);
 
     // XXX TODO SecretCommitmentShareList doesn't need to store the index
     let p1_partial = sign(&message_hash, &p1_sk, &group_key, &p1_secret_comshares.commitments[0], signers).unwrap();
@@ -128,7 +127,7 @@ fn signing_and_verification_3_out_of_5() {
     aggregator.include_partial_signature(p3_partial);
     aggregator.include_partial_signature(p4_partial);
 
-    // XXX TODO aggregator should be a new type here to ensure we have proper state.
+    let aggregator = aggregator.finalize().unwrap();
     let threshold_signature = aggregator.aggregate().unwrap();
     let verification_result = threshold_signature.verify(&group_key, &message_hash);
 
@@ -182,17 +181,18 @@ fn signing_and_verification_with_ed25519_dalek_2_out_of_3() {
     let (_, p2_sk) = p2_state.finish(p2.public_key().unwrap()).unwrap();
     let (_, p3_sk) = p3_state.finish(p3.public_key().unwrap()).unwrap();
 
+    let context = b"CONTEXT STRING STOLEN FROM DALEK TEST SUITE";
     let message = b"This is a test of the tsunami alert system. This is only a test.";
     let (p1_public_comshares, p1_secret_comshares) = generate_commitment_share_lists(&mut OsRng, 1, 1);
     let (p3_public_comshares, p3_secret_comshares) = generate_commitment_share_lists(&mut OsRng, 3, 1);
 
-    let mut aggregator = SignatureAggregator::new(params, group_key, &message[..]);
+    let mut aggregator = SignatureAggregator::new(params, group_key, &context[..], &message[..]);
 
     aggregator.include_signer(1, p1_public_comshares.commitments[0], (&p1_sk).into());
     aggregator.include_signer(3, p3_public_comshares.commitments[0], (&p3_sk).into());
 
     let signers = aggregator.get_signers();
-    let message_hash = compute_message_hash(b"XXX MAKE A REAL CONTEXT STRING", &message[..]);
+    let message_hash = compute_message_hash(&context[..], &message[..]);
 
     // XXX TODO SecretCommitmentShareList doesn't need to store the index
     let p1_partial = sign(&message_hash, &p1_sk, &group_key, &p1_secret_comshares.commitments[0], signers).unwrap();
@@ -201,7 +201,7 @@ fn signing_and_verification_with_ed25519_dalek_2_out_of_3() {
     aggregator.include_partial_signature(p1_partial);
     aggregator.include_partial_signature(p3_partial);
 
-    // XXX TODO aggregator should be a new type here to ensure we have proper state.
+    let aggregator = aggregator.finalize().unwrap();
     let threshold_signature = aggregator.aggregate().unwrap();
     let verification_result = threshold_signature.verify(&group_key, &message_hash);
 

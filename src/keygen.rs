@@ -847,6 +847,7 @@ mod test {
             assert!(result.is_ok(), "participant {} failed to receive a valid secret share", p.public_key.index);
         }
 
+        let context = b"CONTEXT STRING STOLEN FROM DALEK TEST SUITE";
         let message = b"This is a test of the tsunami alert system. This is only a test.";
         let (p1_public_comshares, p1_secret_comshares) = generate_commitment_share_lists(&mut OsRng, 1, 1);
         let (p2_public_comshares, p2_secret_comshares) = generate_commitment_share_lists(&mut OsRng, 2, 1);
@@ -862,14 +863,13 @@ mod test {
 
         let group_key = GroupKey(participants[0].group_key);
 
-        let mut aggregator = SignatureAggregator::new(params, group_key, &message[..]);
+        let mut aggregator = SignatureAggregator::new(params, group_key, &context[..], &message[..]);
 
         aggregator.include_signer(1, p1_public_comshares.commitments[0], (&p1_sk).into());
         aggregator.include_signer(2, p2_public_comshares.commitments[0], (&p2_sk).into());
 
         let signers = aggregator.get_signers();
-
-        let message_hash = compute_message_hash(b"XXX MAKE A REAL CONTEXT STRING", &message[..]);
+        let message_hash = compute_message_hash(&context[..], &message[..]);
 
         // XXX TODO SecretCommitmentShareList doesn't need to store the index
         let p1_partial = sign(&message_hash, &p1_sk, &group_key, &p1_secret_comshares.commitments[0], signers).unwrap();
@@ -878,7 +878,7 @@ mod test {
         aggregator.include_partial_signature(p1_partial);
         aggregator.include_partial_signature(p2_partial);
 
-        // XXX TODO aggregator should be a new type here to ensure we have proper state.
+        let aggregator = aggregator.finalize().unwrap();
         let signing_result = aggregator.aggregate();
 
         assert!(signing_result.is_ok());
