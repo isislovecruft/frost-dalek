@@ -503,6 +503,16 @@ impl SignatureAggregator<Initial<'_>> {
     }
 
     /// Ensure that this signature aggregator is in a proper state to run the aggregation protocol.
+    ///
+    /// # Returns
+    ///
+    /// A Result whose Ok() value is a finalized aggregator, otherwise a
+    /// `Hashmap<u32, &'static str>` containing the participant indices of the misbehaving
+    /// signers and a description of their misbehaviour.
+    ///
+    /// If the `Hashmap` contains a key for `0`, this indicates that
+    /// the aggregator did not have \(( t' \)) partial signers
+    /// s.t. \(( t \le t' \le n \)).
     pub fn finalize(mut self) -> Result<SignatureAggregator<Finalized>, HashMap<u32, &'static str>> {
         let mut misbehaving_participants: HashMap<u32, &'static str> = HashMap::new();
         let remaining_signers = self.get_remaining_signers();
@@ -547,9 +557,6 @@ impl SignatureAggregator<Finalized> {
     /// A Result whose Ok() value is a [`ThresholdSignature`], otherwise a
     /// `Hashmap<u32, &'static str>` containing the participant indices of the misbehaving
     /// signers and a description of their misbehaviour.
-    ///
-    /// If the Hashmap is empty, the aggregator did not have \(( t' \)) partial signers
-    /// s.t. \(( t \le t' \le n \)).
     pub fn aggregate(&self) -> Result<ThresholdSignature, HashMap<u32, &'static str>> {
         let mut misbehaving_participants: HashMap<u32, &'static str> = HashMap::new();
         
@@ -590,6 +597,7 @@ impl SignatureAggregator<Finalized> {
             if check == R_i + (Y_i * (c * lambda)) {
                 z += partial_sig;
             } else {
+                // XXX We don't really need the error string anymore, since there's only one failure mode.
                 misbehaving_participants.insert(signer.participant_index, "Incorrect partial signature");
             }
         }
