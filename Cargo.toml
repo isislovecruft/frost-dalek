@@ -16,7 +16,7 @@ exclude = [ ".gitignore" ]
 [dependencies]
 curve25519-dalek = { version = "3", default-features = false }
 rand = { version = "0.7" }
-sha2 = { version = "*" }
+sha2 = { version = "0.9" }
 subtle = { version = "2.4", default-features = false }
 zeroize = { version = "1", default-features = false, features = ["zeroize_derive"] }
 
