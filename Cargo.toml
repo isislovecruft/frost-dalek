@@ -33,4 +33,4 @@ u32_backend = ["curve25519-dalek/u32_backend"]
 # The u64 backend uses u64s with u128 products.
 u64_backend = ["curve25519-dalek/u64_backend"]
 # The SIMD backend uses parallel formulas, using either AVX2 or AVX512-IFMA.
-simd_backend = ["nightly", "curve25519-dalek/simd_backend"]
+simd_backend = ["curve25519-dalek/simd_backend"]
