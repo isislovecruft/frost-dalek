@@ -849,8 +849,8 @@ mod test {
 
         let context = b"CONTEXT STRING STOLEN FROM DALEK TEST SUITE";
         let message = b"This is a test of the tsunami alert system. This is only a test.";
-        let (p1_public_comshares, p1_secret_comshares) = generate_commitment_share_lists(&mut OsRng, 1, 1);
-        let (p2_public_comshares, p2_secret_comshares) = generate_commitment_share_lists(&mut OsRng, 2, 1);
+        let (p1_public_comshares, mut p1_secret_comshares) = generate_commitment_share_lists(&mut OsRng, 1, 1);
+        let (p2_public_comshares, mut p2_secret_comshares) = generate_commitment_share_lists(&mut OsRng, 2, 1);
 
         let p1_sk = SecretKey {
             index: participants[0].secret_share.index,
@@ -871,9 +871,8 @@ mod test {
         let signers = aggregator.get_signers();
         let message_hash = compute_message_hash(&context[..], &message[..]);
 
-        // XXX TODO SecretCommitmentShareList doesn't need to store the index
-        let p1_partial = p1_sk.sign(&message_hash, &group_key, &p1_secret_comshares.commitments[0], signers).unwrap();
-        let p2_partial = p2_sk.sign(&message_hash, &group_key, &p2_secret_comshares.commitments[0], signers).unwrap();
+        let p1_partial = p1_sk.sign(&message_hash, &group_key, &mut p1_secret_comshares, 0, signers).unwrap();
+        let p2_partial = p2_sk.sign(&message_hash, &group_key, &mut p2_secret_comshares, 0, signers).unwrap();
 
         aggregator.include_partial_signature(p1_partial);
         aggregator.include_partial_signature(p2_partial);

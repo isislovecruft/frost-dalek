@@ -104,9 +104,9 @@ fn signing_and_verification_3_out_of_5() {
 
     let context = b"CONTEXT STRING STOLEN FROM DALEK TEST SUITE";
     let message = b"This is a test of the tsunami alert system. This is only a test.";
-    let (p1_public_comshares, p1_secret_comshares) = generate_commitment_share_lists(&mut OsRng, 1, 1);
-    let (p3_public_comshares, p3_secret_comshares) = generate_commitment_share_lists(&mut OsRng, 3, 1);
-    let (p4_public_comshares, p4_secret_comshares) = generate_commitment_share_lists(&mut OsRng, 4, 1);
+    let (p1_public_comshares, mut p1_secret_comshares) = generate_commitment_share_lists(&mut OsRng, 1, 1);
+    let (p3_public_comshares, mut p3_secret_comshares) = generate_commitment_share_lists(&mut OsRng, 3, 1);
+    let (p4_public_comshares, mut p4_secret_comshares) = generate_commitment_share_lists(&mut OsRng, 4, 1);
 
     let mut aggregator = SignatureAggregator::new(params, group_key, &context[..], &message[..]);
 
@@ -117,9 +117,9 @@ fn signing_and_verification_3_out_of_5() {
     let signers = aggregator.get_signers();
     let message_hash = compute_message_hash(&context[..], &message[..]);
 
-    let p1_partial = p1_sk.sign(&message_hash, &group_key, &p1_secret_comshares.commitments[0], signers).unwrap();
-    let p3_partial = p3_sk.sign(&message_hash, &group_key, &p3_secret_comshares.commitments[0], signers).unwrap();
-    let p4_partial = p4_sk.sign(&message_hash, &group_key, &p4_secret_comshares.commitments[0], signers).unwrap();
+    let p1_partial = p1_sk.sign(&message_hash, &group_key, &mut p1_secret_comshares, 0, signers).unwrap();
+    let p3_partial = p3_sk.sign(&message_hash, &group_key, &mut p3_secret_comshares, 0, signers).unwrap();
+    let p4_partial = p4_sk.sign(&message_hash, &group_key, &mut p4_secret_comshares, 0, signers).unwrap();
 
     aggregator.include_partial_signature(p1_partial);
     aggregator.include_partial_signature(p3_partial);
@@ -181,8 +181,8 @@ fn signing_and_verification_with_ed25519_dalek_2_out_of_3() {
 
     let context = b"CONTEXT STRING STOLEN FROM DALEK TEST SUITE";
     let message = b"This is a test of the tsunami alert system. This is only a test.";
-    let (p1_public_comshares, p1_secret_comshares) = generate_commitment_share_lists(&mut OsRng, 1, 1);
-    let (p3_public_comshares, p3_secret_comshares) = generate_commitment_share_lists(&mut OsRng, 3, 1);
+    let (p1_public_comshares, mut p1_secret_comshares) = generate_commitment_share_lists(&mut OsRng, 1, 1);
+    let (p3_public_comshares, mut p3_secret_comshares) = generate_commitment_share_lists(&mut OsRng, 3, 1);
 
     let mut aggregator = SignatureAggregator::new(params, group_key, &context[..], &message[..]);
 
@@ -192,8 +192,8 @@ fn signing_and_verification_with_ed25519_dalek_2_out_of_3() {
     let signers = aggregator.get_signers();
     let message_hash = compute_message_hash(&context[..], &message[..]);
 
-    let p1_partial = p1_sk.sign(&message_hash, &group_key, &p1_secret_comshares.commitments[0], signers).unwrap();
-    let p3_partial = p3_sk.sign(&message_hash, &group_key, &p3_secret_comshares.commitments[0], signers).unwrap();
+    let p1_partial = p1_sk.sign(&message_hash, &group_key, &mut p1_secret_comshares, 0, signers).unwrap();
+    let p3_partial = p3_sk.sign(&message_hash, &group_key, &mut p3_secret_comshares, 0, signers).unwrap();
 
     aggregator.include_partial_signature(p1_partial);
     aggregator.include_partial_signature(p3_partial);

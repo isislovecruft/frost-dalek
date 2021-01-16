@@ -118,8 +118,6 @@ impl CommitmentShare {
 /// hiding and binding commitments.
 #[derive(Debug)]
 pub struct SecretCommitmentShareList {
-    /// The participant's index.
-    pub participant_index: u32,
     /// The secret commitment shares.
     pub commitments: Vec<CommitmentShare>,
 }
@@ -167,9 +165,12 @@ pub fn generate_commitment_share_lists(
     }
 
     (PublicCommitmentShareList { participant_index, commitments: published },
-     SecretCommitmentShareList { participant_index, commitments })
+     SecretCommitmentShareList { commitments })
 }
 
+// XXX TODO This should maybe be a field on SecretKey with some sort of
+// regeneration API for generating new share, or warning that there are no
+// ununsed shares.
 impl SecretCommitmentShareList {
     /// Drop a used [`CommitmentShare`] from our secret commitment share list
     /// and ensure that it is wiped from memory.

@@ -34,7 +34,7 @@ use sha2::Sha512;
 use crate::keygen::GroupKey;
 use crate::keygen::IndividualPublicKey;
 use crate::parameters::Parameters;
-use crate::precomputation::CommitmentShare;
+use crate::precomputation::SecretCommitmentShareList;
 
 pub use crate::keygen::SecretKey;
 
@@ -297,8 +297,15 @@ impl SecretKey {
     ///   context string, and can be calculated with the helper function
     ///   [`compute_message_hash`].
     /// * The public [`GroupKey`] for this group of signing participants,
-    /// * This signer's [`CommitmentShare`] being used in this instantiation, and
-    /// * The list of all the currently participating [`Signer`]s.
+    /// * This signer's [`SecretCommitmentShareList`] being used in this instantiation and
+    /// * The index of the particular [`CommitmentShare`] being used, and
+    /// * The list of all the currently participating [`Signer`]s (including ourself).
+    ///
+    /// # Warning
+    ///
+    /// The secret share `index` here **must** be the same secret share
+    /// corresponding to its public commitment which is passed to
+    /// `SignatureAggregrator.include_signer()`.
     ///
     /// # Returns
     ///
@@ -311,26 +318,39 @@ impl SecretKey {
         group_key: &GroupKey,
         // XXX [PAPER] I don't know that we can guarantee simultaneous runs of the protocol
         // with these nonces being potentially reused?
-        my_commitment_share: &CommitmentShare,
+        my_secret_commitment_share_list: &mut SecretCommitmentShareList,
+        my_commitment_share_index: usize,
         signers: &[Signer],
     ) -> Result<PartialThresholdSignature, &'static str>
     {
+        if my_commitment_share_index + 1 > my_secret_commitment_share_list.commitments.len() {
+            return Err("Commitment share index out of bounds");
+        }
+
         let (binding_factors, Rs) = compute_binding_factors_and_group_commitment(&message_hash, &signers);
         let R: RistrettoPoint = Rs.values().sum();
         let challenge = compute_challenge(&message_hash, &group_key, &R);
         let my_binding_factor = binding_factors.get(&self.index).ok_or("Could not compute our blinding factor")?;
         let all_participant_indices: Vec<u32> = signers.iter().map(|x| x.participant_index).collect();
         let lambda: Scalar = calculate_lagrange_coefficients(&self.index, &all_participant_indices)?;
+        let my_commitment_share = my_secret_commitment_share_list.commitments[my_commitment_share_index].clone();
         let z = my_commitment_share.hiding.nonce +
             (my_commitment_share.binding.nonce * my_binding_factor) +
             (lambda * self.key * challenge);
 
-        // [DIFFERENT_TO_PAPER] TODO Need to instead pass in the commitment
+        // [DIFFERENT_TO_PAPER] We need to instead pass in the commitment
         // share list and zero-out the used commitment share, which means the
         // signature aggregator needs to tell us somehow which one they picked from
         // our published list.
         //
         // I.... don't really love this API?
+
+        // XXX [PAPER] If we do lists like this, then the indices of the public
+        // commitment shares go out of sync.
+
+        // Zero out our secrets from memory to prevent nonce reuse.
+        my_secret_commitment_share_list.drop_share(my_commitment_share);
+
         Ok(PartialThresholdSignature { index: self.index, z })
     }
 }
@@ -666,7 +686,7 @@ mod test {
 
         let context = b"CONTEXT STRING STOLEN FROM DALEK TEST SUITE";
         let message = b"This is a test of the tsunami alert system. This is only a test.";
-        let (p1_public_comshares, p1_secret_comshares) = generate_commitment_share_lists(&mut OsRng, 1, 1);
+        let (p1_public_comshares, mut p1_secret_comshares) = generate_commitment_share_lists(&mut OsRng, 1, 1);
 
         let mut aggregator = SignatureAggregator::new(params, group_key, &context[..], &message[..]);
 
@@ -675,9 +695,7 @@ mod test {
         let signers = aggregator.get_signers();
         let message_hash = compute_message_hash(&context[..], &message[..]);
 
-        let p1_partial = p1_sk.sign(&message_hash, &group_key, &p1_secret_comshares.commitments[0], signers).unwrap();
-        // XXX TODO We need to drop the used comshare
-        // XXX maybe we should pass in the whole comshare list and the index to ensure it's dropped?
+        let p1_partial = p1_sk.sign(&message_hash, &group_key, &mut p1_secret_comshares, 0, signers).unwrap();
 
         aggregator.include_partial_signature(p1_partial);
 
@@ -712,7 +730,7 @@ mod test {
 
         let context = b"CONTEXT STRING STOLEN FROM DALEK TEST SUITE";
         let message = b"This is a test of the tsunami alert system. This is only a test.";
-        let (p1_public_comshares, p1_secret_comshares) = generate_commitment_share_lists(&mut OsRng, 1, 1);
+        let (p1_public_comshares, mut p1_secret_comshares) = generate_commitment_share_lists(&mut OsRng, 1, 1);
 
         let mut aggregator = SignatureAggregator::new(params, group_key, &context[..], &message[..]);
 
@@ -721,7 +739,7 @@ mod test {
         let signers = aggregator.get_signers();
         let message_hash = compute_message_hash(&context[..], &message[..]);
 
-        let p1_partial = p1_sk.sign(&message_hash, &group_key, &p1_secret_comshares.commitments[0], signers).unwrap();
+        let p1_partial = p1_sk.sign(&message_hash, &group_key, &mut p1_secret_comshares, 0, signers).unwrap();
 
         aggregator.include_partial_signature(p1_partial);
 
@@ -764,7 +782,7 @@ mod test {
 
         let context = b"CONTEXT STRING STOLEN FROM DALEK TEST SUITE";
         let message = b"This is a test of the tsunami alert system. This is only a test.";
-        let (p1_public_comshares, p1_secret_comshares) = generate_commitment_share_lists(&mut OsRng, 1, 1);
+        let (p1_public_comshares, mut p1_secret_comshares) = generate_commitment_share_lists(&mut OsRng, 1, 1);
 
         let mut aggregator = SignatureAggregator::new(params, group_key, &context[..], &message[..]);
 
@@ -773,7 +791,7 @@ mod test {
         let signers = aggregator.get_signers();
         let message_hash = compute_message_hash(&context[..], &message[..]);
 
-        let p1_partial = p1_sk.sign(&message_hash, &group_key, &p1_secret_comshares.commitments[0], signers).unwrap();
+        let p1_partial = p1_sk.sign(&message_hash, &group_key, &mut p1_secret_comshares, 0, signers).unwrap();
 
         aggregator.include_partial_signature(p1_partial);
 
@@ -868,9 +886,9 @@ mod test {
 
         let context = b"CONTEXT STRING STOLEN FROM DALEK TEST SUITE";
         let message = b"This is a test of the tsunami alert system. This is only a test.";
-        let (p1_public_comshares, p1_secret_comshares) = generate_commitment_share_lists(&mut OsRng, 1, 1);
-        let (p3_public_comshares, p3_secret_comshares) = generate_commitment_share_lists(&mut OsRng, 3, 1);
-        let (p4_public_comshares, p4_secret_comshares) = generate_commitment_share_lists(&mut OsRng, 4, 1);
+        let (p1_public_comshares, mut p1_secret_comshares) = generate_commitment_share_lists(&mut OsRng, 1, 1);
+        let (p3_public_comshares, mut p3_secret_comshares) = generate_commitment_share_lists(&mut OsRng, 3, 1);
+        let (p4_public_comshares, mut p4_secret_comshares) = generate_commitment_share_lists(&mut OsRng, 4, 1);
 
         let mut aggregator = SignatureAggregator::new(params, group_key, &context[..], &message[..]);
 
@@ -881,9 +899,9 @@ mod test {
         let signers = aggregator.get_signers();
         let message_hash = compute_message_hash(&context[..], &message[..]);
 
-        let p1_partial = p1_sk.sign(&message_hash, &group_key, &p1_secret_comshares.commitments[0], signers).unwrap();
-        let p3_partial = p3_sk.sign(&message_hash, &group_key, &p3_secret_comshares.commitments[0], signers).unwrap();
-        let p4_partial = p4_sk.sign(&message_hash, &group_key, &p4_secret_comshares.commitments[0], signers).unwrap();
+        let p1_partial = p1_sk.sign(&message_hash, &group_key, &mut p1_secret_comshares, 0, signers).unwrap();
+        let p3_partial = p3_sk.sign(&message_hash, &group_key, &mut p3_secret_comshares, 0, signers).unwrap();
+        let p4_partial = p4_sk.sign(&message_hash, &group_key, &mut p4_secret_comshares, 0, signers).unwrap();
 
         aggregator.include_partial_signature(p1_partial);
         aggregator.include_partial_signature(p3_partial);
@@ -957,8 +975,8 @@ mod test {
 
         let context = b"CONTEXT STRING STOLEN FROM DALEK TEST SUITE";
         let message = b"This is a test of the tsunami alert system. This is only a test.";
-        let (p1_public_comshares, p1_secret_comshares) = generate_commitment_share_lists(&mut OsRng, 1, 1);
-        let (p2_public_comshares, p2_secret_comshares) = generate_commitment_share_lists(&mut OsRng, 2, 1);
+        let (p1_public_comshares, mut p1_secret_comshares) = generate_commitment_share_lists(&mut OsRng, 1, 1);
+        let (p2_public_comshares, mut p2_secret_comshares) = generate_commitment_share_lists(&mut OsRng, 2, 1);
 
         let mut aggregator = SignatureAggregator::new(params, group_key.clone(), &context[..], &message[..]);
 
@@ -968,8 +986,8 @@ mod test {
         let signers = aggregator.get_signers();
         let message_hash = compute_message_hash(&context[..], &message[..]);
 
-        let p1_partial = p1_sk.sign(&message_hash, &group_key, &p1_secret_comshares.commitments[0], signers).unwrap();
-        let p2_partial = p2_sk.sign(&message_hash, &group_key, &p2_secret_comshares.commitments[0], signers).unwrap();
+        let p1_partial = p1_sk.sign(&message_hash, &group_key, &mut p1_secret_comshares, 0, signers).unwrap();
+        let p2_partial = p2_sk.sign(&message_hash, &group_key, &mut p2_secret_comshares, 0, signers).unwrap();
 
         aggregator.include_partial_signature(p1_partial);
         aggregator.include_partial_signature(p2_partial);
