@@ -4,7 +4,14 @@ version = "0.1.0"
 authors = ["isis lovecruft <isis@patternsinthevoid.net>"]
 edition = "2018"
 description = "FROST: Flexible Round-Optimised Threshold Signature using the Ristretto group"
-license = "MIT"
+readme = "README.md"
+license = "BSD-3-Clause"
+repository = "https://github.com/isislovecruft/frost-dalek"
+homepage = "https://dalek.rs"
+documentation = "https://docs.rs/frost-dalek"
+keywords = ["cryptography", "frost", "ristretto", "signature", "threshold-signature"]
+categories = ["cryptography"]
+exclude = [ ".gitignore" ]
 
 [dependencies]
 curve25519-dalek = { version = "3", default-features = false }
