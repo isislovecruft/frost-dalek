@@ -181,6 +181,12 @@
 //! # #[cfg(not(feature = "std"))]
 //! # fn main() {}
 //! ```
+//!
+//! # Note on `no_std` usage
+//!
+//! Most of this crate is `no_std` compliant, however, the current
+//! implementation uses `HashMap`s for the signature creation and aggregation
+//! protocols, and thus requires the standard library.
 
 #![no_std]
 #![warn(future_incompatible)]

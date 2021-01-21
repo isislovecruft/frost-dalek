@@ -9,6 +9,12 @@ by Chelsea Komlo and Ian Goldberg.
 
 Please see [the documentation](https://docs.rs/frost-dalek) for usage examples.
 
+## Note on `no_std` usage
+
+Most of this crate is `no_std` compliant, however, the current
+implementation uses `HashMap`s for the signature creation and aggregation
+protocols, and thus requires the standard library.
+
 ## WARNING
 
 This code is likely not stable.  The author is working with the paper authors on
