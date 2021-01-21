@@ -776,9 +776,13 @@ mod test {
     use super::*;
 
     use crate::precomputation::generate_commitment_share_lists;
+
+    #[cfg(feature = "std")]
     use crate::signature::{calculate_lagrange_coefficients, compute_message_hash};
+    #[cfg(feature = "std")]
     use crate::signature::SignatureAggregator;
 
+    #[cfg(feature = "std")]
     /// Reconstruct the secret from enough (at least the threshold) already-verified shares.
     fn reconstruct_secret(participants: &Vec<&DealtParticipant>) -> Result<Scalar, &'static str> {
         let all_participant_indices: Vec<u32> = participants.iter().map(|p| p.public_key.index).collect();
@@ -802,6 +806,7 @@ mod test {
         assert!(result.is_ok());
     }
 
+    #[cfg(feature = "std")]
     #[test]
     fn verify_secret_sharing_from_dealer() {
         let params = Parameters { n: 3, t: 2 };
@@ -835,6 +840,7 @@ mod test {
         }
     }
 
+    #[cfg(feature = "std")]
     #[test]
     fn dkg_with_dealer_and_signing() {
         let params = Parameters { t: 1, n: 2 };

@@ -11,18 +11,22 @@
 //!
 //! [FROST]: https://eprint.iacr.org/2020/852
 //!
-//! # Examples
+//! # Usage
 //!
 //! ```rust
+//! # #[cfg(feature = "std")]
 //! use frost_dalek::compute_message_hash;
+//! # #[cfg(feature = "std")]
 //! use frost_dalek::generate_commitment_share_lists;
 //! use frost_dalek::DistributedKeyGeneration;
 //! use frost_dalek::Parameters;
 //! use frost_dalek::Participant;
+//! # #[cfg(feature = "std")]
 //! use frost_dalek::SignatureAggregator;
 //!
 //! use rand::rngs::OsRng;
 //!
+//! # #[cfg(feature = "std")]
 //! # fn do_test() -> Result<(), ()> {
 //! // Set up key shares for a threshold signature scheme which needs at least
 //! // 2-out-of-3 signers.
@@ -172,7 +176,10 @@
 //! // in the same way they would for a standard Schnorr signature.
 //! let verified = threshold_signature.verify(&alice_group_key, &message_hash)?;
 //! # Ok(())}
+//! # #[cfg(feature = "std")]
 //! # fn main() { assert!(do_test().is_ok()); }
+//! # #[cfg(not(feature = "std"))]
+//! # fn main() {}
 //! ```
 
 #![no_std]
@@ -196,14 +203,17 @@ pub mod parameters;
 pub mod precomputation;
 pub mod nizk;
 
-// The signing protocol uses Hashmap (currently for the signature aggregator,
-// only), which requires std.
-#[cfg(any(test, feature = "std"))]
+// The signing protocol uses Hashmap (currently for both the signature aggregator
+// and signers), which requires std.
+#[cfg(feature = "std")]
 pub mod signature;
 
 pub use keygen::DistributedKeyGeneration;
 pub use keygen::Participant;
 pub use parameters::Parameters;
 pub use precomputation::generate_commitment_share_lists;
+
+#[cfg(feature = "std")]
 pub use signature::compute_message_hash;
+#[cfg(feature = "std")]
 pub use signature::SignatureAggregator;
