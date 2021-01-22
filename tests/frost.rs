@@ -9,8 +9,10 @@
 
 //! Integration tests for FROST.
 
+#[cfg(feature = "std")]
 use ed25519_dalek::Verifier;
 
+#[cfg(feature = "std")]
 use rand::rngs::OsRng;
 
 #[cfg(feature = "std")]
@@ -18,8 +20,11 @@ use frost_dalek::compute_message_hash;
 #[cfg(feature = "std")]
 use frost_dalek::generate_commitment_share_lists;
 
+#[cfg(feature = "std")]
 use frost_dalek::DistributedKeyGeneration;
+#[cfg(feature = "std")]
 use frost_dalek::Parameters;
+#[cfg(feature = "std")]
 use frost_dalek::Participant;
 
 #[cfg(feature = "std")]

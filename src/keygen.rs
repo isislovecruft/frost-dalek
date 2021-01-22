@@ -782,6 +782,7 @@ impl GroupKey {
 mod test {
     use super::*;
 
+    #[cfg(feature = "std")]
     use crate::precomputation::generate_commitment_share_lists;
 
     #[cfg(feature = "std")]

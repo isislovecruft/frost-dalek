@@ -298,7 +298,7 @@ impl SecretKey {
     ///   [`compute_message_hash`].
     /// * The public [`GroupKey`] for this group of signing participants,
     /// * This signer's [`SecretCommitmentShareList`] being used in this instantiation and
-    /// * The index of the particular [`CommitmentShare`] being used, and
+    /// * The index of the particular `CommitmentShare` being used, and
     /// * The list of all the currently participating [`Signer`]s (including ourself).
     ///
     /// # Warning
@@ -377,7 +377,7 @@ pub(crate) struct AggregatorState {
 /// A signature aggregator is an untrusted party who coalesces all of the
 /// participating signers' published commitment shares and their
 /// [`PartialThresholdSignature`] and creates the final [`ThresholdSignature`].
-/// The signature aggregator may even be one of the `t` participants in this
+/// The signature aggregator may even be one of the \\(t\\) participants in this
 /// signing operation.
 #[derive(Debug)]
 pub struct SignatureAggregator<A: Aggregator> {
