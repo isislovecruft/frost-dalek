@@ -14,7 +14,7 @@ categories = ["cryptography"]
 exclude = [ ".gitignore" ]
 
 [package.metadata.docs.rs]
-rustdoc-args = ["--html-in-header", "https://github.com/isislovecruft/frost-dalek/blob/master/docs/assets/rustdoc-include-katex-header.html"]
+rustdoc-args = ["--html-in-header", "/opt/rustwide/workdir/docs/assets/rustdoc-include-katex-header.html"]
 
 [dependencies]
 curve25519-dalek = { version = "3", default-features = false }
