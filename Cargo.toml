@@ -13,6 +13,9 @@ keywords = ["cryptography", "frost", "ristretto", "signature", "threshold-signat
 categories = ["cryptography"]
 exclude = [ ".gitignore" ]
 
+[package.metadata.docs.rs]
+rustdoc-args = ["--html-in-header", ".cargo/registry/src/github.com-1ecc6299db9ec823/curve25519-dalek-3.0.2/rustdoc-include-katex-header.html"]
+
 [dependencies]
 curve25519-dalek = { version = "3", default-features = false }
 rand = { version = "0.7" }
