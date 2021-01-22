@@ -736,14 +736,21 @@ pub struct SecretKey {
     pub(crate) key: Scalar,
 }
 
-impl From<&SecretKey> for IndividualPublicKey {
-    fn from(source: &SecretKey) -> IndividualPublicKey {
-        let share = &RISTRETTO_BASEPOINT_TABLE * &source.key;
+impl SecretKey {
+    /// Derive the corresponding public key for this secret key.
+    pub fn to_public(&self) -> IndividualPublicKey {
+        let share = &RISTRETTO_BASEPOINT_TABLE * &self.key;
 
         IndividualPublicKey {
-            index: source.index,
+            index: self.index,
             share,
         }
+    }
+}
+
+impl From<&SecretKey> for IndividualPublicKey {
+    fn from(source: &SecretKey) -> IndividualPublicKey {
+        source.to_public()
     }
 }
 
