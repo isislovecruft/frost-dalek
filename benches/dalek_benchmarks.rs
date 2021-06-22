@@ -13,6 +13,7 @@
 extern crate criterion;
 
 use criterion::Criterion;
+use criterion::black_box;
 
 use rand::rngs::OsRng;
 
@@ -63,7 +64,7 @@ mod dkg_benches {
                                                           &p1.index,
                                                           &p1coeffs,
                                                           &mut p1_other_participants).unwrap();
-        
+
         let mut p2_other_participants: Vec<Participant> = vec!(p1.clone(), p3.clone(), p4.clone(), p5.clone());
         let p2_state = DistributedKeyGeneration::<>::new(&params,
                                                          &p2.index,
@@ -99,6 +100,66 @@ mod dkg_benches {
 
         c.bench_function("Round Two", move |b| {
             b.iter(|| p1_state.clone().to_round_two(p1_my_secret_shares.clone()));
+        });
+    }
+
+    fn long_term_verification_shares_3_out_of_5(c: &mut Criterion) {
+        let params = Parameters { n: 5, t: 3 };
+
+        let (p1, p1coeffs) = Participant::new(&params, 1);
+        let (p2, p2coeffs) = Participant::new(&params, 2);
+        let (p3, p3coeffs) = Participant::new(&params, 3);
+        let (p4, p4coeffs) = Participant::new(&params, 4);
+        let (p5, p5coeffs) = Participant::new(&params, 5);
+
+        let mut p1_other_participants: Vec<Participant> = vec!(p2.clone(), p3.clone(), p4.clone(), p5.clone());
+        let p1_state = DistributedKeyGeneration::<_>::new(&params,
+                                                          &p1.index,
+                                                          &p1coeffs,
+                                                          &mut p1_other_participants).unwrap();
+
+        let mut p2_other_participants: Vec<Participant> = vec!(p1.clone(), p3.clone(), p4.clone(), p5.clone());
+        let p2_state = DistributedKeyGeneration::<>::new(&params,
+                                                         &p2.index,
+                                                         &p2coeffs,
+                                                         &mut p2_other_participants).unwrap();
+        let p2_their_secret_shares = p2_state.their_secret_shares().unwrap();
+
+        let mut p3_other_participants: Vec<Participant> = vec!(p1.clone(), p2.clone(), p4.clone(), p5.clone());
+        let p3_state = DistributedKeyGeneration::<_>::new(&params,
+                                                          &p3.index,
+                                                          &p3coeffs,
+                                                          &mut p3_other_participants).unwrap();
+        let p3_their_secret_shares = p3_state.their_secret_shares().unwrap();
+
+        let mut p4_other_participants: Vec<Participant> = vec!(p1.clone(), p2.clone(), p3.clone(), p5.clone());
+        let p4_state = DistributedKeyGeneration::<_>::new(&params,
+                                                          &p4.index,
+                                                          &p4coeffs,
+                                                          &mut p4_other_participants).unwrap();
+        let p4_their_secret_shares = p4_state.their_secret_shares().unwrap();
+
+        let mut p5_other_participants: Vec<Participant> = vec!(p1.clone(), p2.clone(), p3.clone(), p4.clone());
+        let p5_state = DistributedKeyGeneration::<_>::new(&params,
+                                                          &p5.index,
+                                                          &p5coeffs,
+                                                          &mut p5_other_participants).unwrap();
+        let p5_their_secret_shares = p5_state.their_secret_shares().unwrap();
+
+        let p1_my_secret_shares = vec!(p2_their_secret_shares[0].clone(), // XXX FIXME indexing
+                                       p3_their_secret_shares[0].clone(),
+                                       p4_their_secret_shares[0].clone(),
+                                       p5_their_secret_shares[0].clone());
+
+        let p1_state = p1_state.to_round_two(p1_my_secret_shares).unwrap();
+        c.bench_function("LT Verification Shares", move |b| {
+            b.iter(|| {
+              let pubshare_p2 = p1_state.calculate_other_verification_share(black_box(&2), &p1);
+              let pubshare_p3 = p1_state.calculate_other_verification_share(black_box(&3), &p1);
+              let pubshare_p4 = p1_state.calculate_other_verification_share(black_box(&4), &p1);
+              let pubshare_p5 = p1_state.calculate_other_verification_share(black_box(&5), &p1);
+              (pubshare_p2, pubshare_p3, pubshare_p4, pubshare_p5)
+              });
         });
     }
 
@@ -166,6 +227,7 @@ mod dkg_benches {
             participant_new,
             round_one_3_out_of_5,
             round_two_3_out_of_5,
+            long_term_verification_shares_3_out_of_5,
             finish_3_out_of_5,
     }
 }
