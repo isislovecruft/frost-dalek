@@ -78,15 +78,20 @@ impl PartialEq for Signer {
 /// signing protocol during the first phase of a signature creation.
 #[derive(Debug)]
 pub struct PartialThresholdSignature {
+    /// The index of the participant who has computed this signature
+    /// TODO Decide whether these fields should be public so that downstream consumers can opt for only transmitting `z`
     pub(crate) index: u32,
+    /// partial threshold signature itself
     pub(crate) z: Scalar,
 }
 
 /// A complete, aggregated threshold signature.
 #[derive(Debug)]
 pub struct ThresholdSignature {
-    pub(crate) R: RistrettoPoint,
-    pub(crate) z: Scalar,
+    /// commitment
+    pub R: RistrettoPoint,
+    /// signature
+    pub z: Scalar,
 }
 
 impl ThresholdSignature {

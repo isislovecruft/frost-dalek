@@ -168,6 +168,8 @@ use std::boxed::Box;
 #[cfg(feature = "std")]
 use std::vec::Vec;
 
+use core::iter;
+
 #[cfg(feature = "std")]
 use std::cmp::Ordering;
 #[cfg(not(feature = "std"))]
@@ -303,6 +305,7 @@ impl Participant {
     /// Retrieve \\( \alpha_{i0} * B \\), where \\( B \\) is the Ristretto basepoint.
     ///
     /// This is used to pass into the final call to `DistributedKeyGeneration::<RoundTwo>.finish()`.
+    /// MINOR: rename to key_commitment() to avoid confusion with the public verification share of a participant?
     pub fn public_key(&self) -> Option<&RistrettoPoint> {
         if !self.commitments.is_empty() {
             return Some(&self.commitments[0]);
@@ -574,7 +577,7 @@ pub struct SecretShare {
     pub index: u32,
     /// The final evaluation of the polynomial for the participant-respective
     /// indeterminant.
-    pub(crate) polynomial_evaluation: Scalar,
+    pub polynomial_evaluation: Scalar,
 }
 
 impl SecretShare {
@@ -673,6 +676,44 @@ impl DistributedKeyGeneration<RoundTwo> {
 
         Ok(GroupKey(keys.iter().sum()))
     }
+
+    /// Any participant can compute the public verification share of any other participant.
+    ///
+    /// This can be done by re-computing each [`IndividualPublicKey`] as \\(Y\_i\\) s.t.:
+    ///
+    /// \\[
+    /// Y\_i = \prod\_{j=1}^{n} \prod\_{k=0}^{t-1} \phi\_{jk}^{i^{k} \mod q}
+    /// \\]
+    ///
+    /// for each [`Participant`] index \\(i\\).
+    ///
+    /// This long-lived public verification share can be used to verify partial signatures of this peer.
+    ///
+    /// # Inputs
+    ///
+    /// * The `index` \\(i\\) of the participant of which to compute the public verification share
+    /// * The [`Participant`] who wants to compute the verification share (we need its commitments)
+    pub fn calculate_other_verification_share(&self, index: &u32, myself: &Participant) -> IndividualPublicKey {
+      let other_index: Scalar = (*index).into();
+      let mut partial_pubkey: RistrettoPoint = RistrettoPoint::identity();
+
+      for (_j, commitments) in self.state.their_commitments.iter()
+      .map(|(i, c)| (i, &c.0))
+      .chain(iter::once((&myself.index, &myself.commitments))) {
+        let mut rhs: RistrettoPoint = RistrettoPoint::identity();
+
+        // Commitments are already sorted by definition
+        for (rev_k, rev_phi_k) in commitments.iter().rev().enumerate() {
+          rhs += rev_phi_k;
+
+          if rev_k != (commitments.len() - 1) { // first commitment is at k=0
+            rhs *= other_index;
+          }
+        }
+        partial_pubkey += rhs;
+      }
+    IndividualPublicKey {index: *index, share: partial_pubkey}
+  }
 }
 
 /// A public verification share for a participant.
@@ -688,41 +729,10 @@ pub struct IndividualPublicKey {
 }
 
 impl IndividualPublicKey {
-    /// Any participant can compute the public verification share of any other participant.
-    ///
-    /// This is done by re-computing each [`IndividualPublicKey`] as \\(Y\_i\\) s.t.:
-    ///
-    /// \\[
-    /// Y\_i = \prod\_{j=1}^{n} \prod\_{k=0}^{t-1} \phi\_{jk}^{i^{k} \mod q}
-    /// \\]
-    ///
-    /// for each [`Participant`] index \\(i\\).
-    ///
-    /// # Inputs
-    ///
-    /// * The [`Parameters`] of this threshold signing instance, and
-    /// * A vector of `commitments` regarding the secret polynomial
-    ///   [`Coefficients`] that this [`IndividualPublicKey`] was generated with.
-    ///
-    /// # Returns
-    ///
-    /// A `Result` with either an empty `Ok` or `Err` value, depending on
-    /// whether or not the verification was successful.
-    #[allow(unused)]
-    pub fn verify(
-        &self,
-        parameters: &Parameters,
-        commitments: &[RistrettoPoint],
-    ) -> Result<(), ()>
-    {
-        let rhs = RistrettoPoint::identity();
-
-        for j in 1..parameters.n {
-            for k in 0..parameters.t {
-                // XXX ah shit we need the incoming commitments to be sorted or have indices
-            }
-        }
-        unimplemented!()
+    /// Serialise this public key to an array of bytes.
+    /// Not required for the protocol but useful for logging.
+    pub fn to_bytes(&self) -> [u8; 32] {
+      self.share.compress().to_bytes()
     }
 }
 
@@ -1055,11 +1065,22 @@ mod test {
         let p4_state = p4_state.to_round_two(p4_my_secret_shares).unwrap();
         let p5_state = p5_state.to_round_two(p5_my_secret_shares).unwrap();
 
-        let (p1_group_key, _p1_secret_key) = p1_state.finish(p1.public_key().unwrap()).unwrap();
+        // let p2 compute the verification shares of all other peers
+        let p1_pubkey_at_p2 = p2_state.calculate_other_verification_share(&1, &p2);
+        let p3_pubkey_at_p2 = p2_state.calculate_other_verification_share(&3, &p2);
+        let p4_pubkey_at_p2 = p2_state.calculate_other_verification_share(&4, &p2);
+        let p5_pubkey_at_p2 = p2_state.calculate_other_verification_share(&5, &p2);
+
+        let (p1_group_key, p1_secret_key) = p1_state.finish(p1.public_key().unwrap()).unwrap();
         let (p2_group_key, _p2_secret_key) = p2_state.finish(p2.public_key().unwrap()).unwrap();
-        let (p3_group_key, _p3_secret_key) = p3_state.finish(p3.public_key().unwrap()).unwrap();
-        let (p4_group_key, _p4_secret_key) = p4_state.finish(p4.public_key().unwrap()).unwrap();
-        let (p5_group_key, _p5_secret_key) = p5_state.finish(p5.public_key().unwrap()).unwrap();
+        let (p3_group_key, p3_secret_key) = p3_state.finish(p3.public_key().unwrap()).unwrap();
+        let (p4_group_key, p4_secret_key) = p4_state.finish(p4.public_key().unwrap()).unwrap();
+        let (p5_group_key, p5_secret_key) = p5_state.finish(p5.public_key().unwrap()).unwrap();
+
+        let p1_public_key: IndividualPublicKey = (&p1_secret_key).into();
+        let p3_public_key: IndividualPublicKey = (&p3_secret_key).into();
+        let p4_public_key: IndividualPublicKey = (&p4_secret_key).into();
+        let p5_public_key: IndividualPublicKey = (&p5_secret_key).into();
 
         assert!(p1_group_key.0.compress() == p2_group_key.0.compress());
         assert!(p2_group_key.0.compress() == p3_group_key.0.compress());
@@ -1072,6 +1093,11 @@ mod test {
                  p3.public_key().unwrap() +
                  p4.public_key().unwrap() +
                  p5.public_key().unwrap()).compress());
+
+        assert_eq!(p1_public_key.share.compress(), p1_pubkey_at_p2.share.compress());
+        assert_eq!(p3_public_key.share.compress(), p3_pubkey_at_p2.share.compress());
+        assert_eq!(p4_public_key.share.compress(), p4_pubkey_at_p2.share.compress());
+        assert_eq!(p5_public_key.share.compress(), p5_pubkey_at_p2.share.compress());
     }
 
 

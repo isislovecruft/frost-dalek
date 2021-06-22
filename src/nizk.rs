@@ -36,9 +36,9 @@ use sha2::Sha512;
 #[derive(Clone, Debug)]
 pub struct NizkOfSecretKey {
     /// The scalar portion of the Schnorr signature encoding the context.
-    s: Scalar,
+    pub s: Scalar,
     /// The scalar portion of the Schnorr signature which is the actual signature.
-    r: Scalar,
+    pub r: Scalar,
 }
 
 impl NizkOfSecretKey {
