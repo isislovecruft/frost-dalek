@@ -303,6 +303,7 @@ impl Participant {
     /// Retrieve \\( \alpha_{i0} * B \\), where \\( B \\) is the Ristretto basepoint.
     ///
     /// This is used to pass into the final call to `DistributedKeyGeneration::<RoundTwo>.finish()`.
+    /// MINOR: rename to key_commitment() to avoid confusion with the public verification share of a participant?
     pub fn public_key(&self) -> Option<&RistrettoPoint> {
         if !self.commitments.is_empty() {
             return Some(&self.commitments[0]);
@@ -574,7 +575,7 @@ pub struct SecretShare {
     pub index: u32,
     /// The final evaluation of the polynomial for the participant-respective
     /// indeterminant.
-    pub(crate) polynomial_evaluation: Scalar,
+    pub polynomial_evaluation: Scalar,
 }
 
 impl SecretShare {
